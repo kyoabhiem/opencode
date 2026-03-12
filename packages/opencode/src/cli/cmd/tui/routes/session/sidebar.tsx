@@ -11,6 +11,7 @@ import { useKeybind } from "../../context/keybind"
 import { useDirectory } from "../../context/directory"
 import { useKV } from "../../context/kv"
 import { TodoItem } from "../../component/todo-item"
+import { formatTokens } from "@/util/format"
 
 export function Sidebar(props: { sessionID: string; overlay?: boolean }) {
   const sync = useSync()
@@ -60,6 +61,30 @@ export function Sidebar(props: { sessionID: string; overlay?: boolean }) {
     }
   })
 
+  const usage = createMemo(() => {
+    let input = 0
+    let output = 0
+    let read = 0
+    let write = 0
+    for (const msg of messages()) {
+      if (msg.role !== "assistant") continue
+      const parts = sync.data.part[msg.id] ?? []
+      for (const p of parts) {
+        if (p.type !== "step-finish") continue
+        input += p.tokens.input + p.tokens.reasoning
+        output += p.tokens.output
+        read += p.tokens.cache.read
+        write += p.tokens.cache.write
+      }
+    }
+    const total = input + output + read + write
+    if (total === 0) return undefined
+    return {
+      total: formatTokens(total),
+      detail: `${formatTokens(input)}/${formatTokens(output)} · ${formatTokens(read)}/${formatTokens(write)}`,
+    }
+  })
+
   const directory = useDirectory()
   const kv = useKV()
 
@@ -102,10 +127,20 @@ export function Sidebar(props: { sessionID: string; overlay?: boolean }) {
               <text fg={theme.text}>
                 <b>Context</b>
               </text>
-              <text fg={theme.textMuted}>{context()?.tokens ?? 0} tokens</text>
-              <text fg={theme.textMuted}>{context()?.percentage ?? 0}% used</text>
+              <text fg={theme.textMuted}>
+                {context()?.tokens ?? 0} tokens{context()?.percentage != null ? ` (${context()!.percentage}%)` : ""}
+              </text>
               <text fg={theme.textMuted}>{cost()} spent</text>
             </box>
+            <Show when={usage()}>
+              <box>
+                <text fg={theme.text}>
+                  <b>Session</b>
+                </text>
+                <text fg={theme.textMuted}>{usage()!.total} tokens</text>
+                <text fg={theme.textMuted}>{usage()!.detail}</text>
+              </box>
+            </Show>
             <Show when={mcpEntries().length > 0}>
               <box>
                 <box

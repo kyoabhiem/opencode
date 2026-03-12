@@ -1018,6 +1018,9 @@ export function Prompt(props: PromptProps) {
                 <box flexDirection="row" gap={1}>
                   <text flexShrink={0} fg={keybind.leader ? theme.textMuted : theme.text}>
                     {local.model.parsed().model}
+                    <Show when={local.model.parsed().context}>
+                      <span style={{ fg: theme.textMuted }}> ({local.model.parsed().context})</span>
+                    </Show>
                   </text>
                   <text fg={theme.textMuted}>{local.model.parsed().provider}</text>
                   <Show when={showVariant()}>

@@ -4,6 +4,7 @@ import type { Agent } from "../agent/agent"
 import type { Permission } from "../permission"
 import type { SessionID, MessageID } from "../session/schema"
 import { Truncate } from "./truncate"
+import { Token } from "../util/token"
 
 export namespace Tool {
   interface Metadata {
@@ -72,7 +73,12 @@ export namespace Tool {
           if (result.metadata.truncated !== undefined) {
             return result
           }
-          const truncated = await Truncate.output(result.output, {}, initCtx?.agent)
+          const model = ctx.extra?.model
+          const truncated = await Truncate.output(
+            result.output,
+            { budget: Token.budget(model?.limit?.context) },
+            initCtx?.agent,
+          )
           return {
             ...result,
             output: truncated.content,

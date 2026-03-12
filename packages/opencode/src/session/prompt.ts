@@ -49,6 +49,7 @@ import { Shell } from "@/shell/shell"
 import { Truncate } from "@/tool/truncate"
 import { decodeDataUrl } from "@/util/data-url"
 import { Process } from "@/util/process"
+import { Token } from "@/util/token"
 
 // @ts-ignore
 globalThis.AI_SDK_LOG_WARNINGS = false
@@ -294,6 +295,7 @@ export namespace SessionPrompt {
     let structuredOutput: unknown | undefined
 
     let step = 0
+    let pruneInterval = 5
     const session = await Session.get(sessionID)
     while (true) {
       await SessionStatus.set(sessionID, { type: "busy" })
@@ -329,6 +331,8 @@ export namespace SessionPrompt {
       }
 
       step++
+      // Mid-chain pruning: discard old tool outputs periodically
+      if (step > 1 && step % pruneInterval === 0) await SessionCompaction.prune({ sessionID })
       if (step === 1)
         ensureTitle({
           session,
@@ -349,6 +353,7 @@ export namespace SessionPrompt {
         }
         throw e
       })
+      pruneInterval = model.limit.context >= 128_000 ? 8 : model.limit.context <= 32_000 ? 3 : 5
       const task = tasks.pop()
 
       // pending subtask
@@ -664,6 +669,30 @@ export namespace SessionPrompt {
         system.push(STRUCTURED_OUTPUT_SYSTEM_PROMPT)
       }
 
+      const pending = [
+        ...MessageV2.toModelMessages(msgs, model),
+        ...(isLastStep
+          ? [
+              {
+                role: "assistant" as const,
+                content: MAX_STEPS,
+              },
+            ]
+          : []),
+      ]
+
+      // Pre-flight: estimate tokens and trigger compaction before sending
+      const sysTokens = system.reduce((sum, s) => sum + Token.estimate(s), 0)
+      if (step > 1 && (await SessionCompaction.shouldCompact({ messages: pending, model, system: sysTokens }))) {
+        await SessionCompaction.create({
+          sessionID,
+          agent: lastUser.agent,
+          model: lastUser.model,
+          auto: true,
+        })
+        continue
+      }
+
       const result = await processor.process({
         user: lastUser,
         agent,
@@ -671,17 +700,7 @@ export namespace SessionPrompt {
         abort,
         sessionID,
         system,
-        messages: [
-          ...MessageV2.toModelMessages(msgs, model),
-          ...(isLastStep
-            ? [
-                {
-                  role: "assistant" as const,
-                  content: MAX_STEPS,
-                },
-              ]
-            : []),
-        ],
+        messages: pending,
         tools,
         model,
         toolChoice: format.type === "json_schema" ? "required" : undefined,
@@ -907,7 +926,11 @@ export namespace SessionPrompt {
           }
         }
 
-        const truncated = await Truncate.output(textParts.join("\n\n"), {}, input.agent)
+        const truncated = await Truncate.output(
+          textParts.join("\n\n"),
+          { budget: Token.budget(input.model?.limit?.context) },
+          input.agent,
+        )
         const metadata = {
           ...(result.metadata ?? {}),
           truncated: truncated.truncated,

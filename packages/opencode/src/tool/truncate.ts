@@ -25,6 +25,8 @@ export namespace Truncate {
     maxLines?: number
     maxBytes?: number
     direction?: "head" | "tail"
+    /** Token budget — dynamically caps maxBytes to ~4 bytes per token */
+    budget?: number
   }
 
   function hasTaskTool(agent?: Agent.Info) {
@@ -61,8 +63,9 @@ export namespace Truncate {
       })
 
       const output = Effect.fn("Truncate.output")(function* (text: string, options: Options = {}, agent?: Agent.Info) {
+        const cap = options.budget ? options.budget * 4 : undefined
         const maxLines = options.maxLines ?? MAX_LINES
-        const maxBytes = options.maxBytes ?? MAX_BYTES
+        const maxBytes = cap ? Math.min(options.maxBytes ?? MAX_BYTES, cap) : (options.maxBytes ?? MAX_BYTES)
         const direction = options.direction ?? "head"
         const lines = text.split("\n")
         const totalBytes = Buffer.byteLength(text, "utf-8")

@@ -227,19 +227,166 @@ describe("session.compaction.isOverflow", () => {
   })
 })
 
+describe("session.compaction.estimateMessages", () => {
+  test("estimates string content messages", () => {
+    const messages = [
+      { role: "user" as const, content: "Hello world" },
+      { role: "assistant" as const, content: "Hi there, how can I help?" },
+    ]
+    const result = SessionCompaction.estimateMessages(messages)
+    expect(result).toBeGreaterThan(0)
+    expect(result).toBeLessThan(50)
+  })
+
+  test("estimates array content with text parts", () => {
+    const messages = [
+      {
+        role: "user" as const,
+        content: [{ type: "text" as const, text: "x".repeat(1000) }],
+      },
+    ]
+    const result = SessionCompaction.estimateMessages(messages)
+    expect(result).toBeGreaterThan(0)
+  })
+
+  test("estimates tool call args in assistant messages", () => {
+    const messages = [
+      {
+        role: "assistant" as const,
+        content: [
+          { type: "text" as const, text: "Let me read that file." },
+          { type: "tool-call" as const, toolCallId: "1", toolName: "read", input: { filePath: "/foo/bar.ts" } },
+        ],
+      },
+    ]
+    const result = SessionCompaction.estimateMessages(messages)
+    expect(result).toBeGreaterThan(Token.estimate("Let me read that file."))
+  })
+
+  test("estimates tool result content", () => {
+    const messages = [
+      {
+        role: "tool" as const,
+        content: [
+          {
+            type: "tool-result" as const,
+            toolCallId: "1",
+            toolName: "read",
+            output: { type: "text" as const, value: "x".repeat(5000) },
+          },
+        ],
+      },
+    ]
+    const result = SessionCompaction.estimateMessages(messages)
+    expect(result).toBeGreaterThan(100)
+  })
+
+  test("returns 0 for empty messages", () => {
+    expect(SessionCompaction.estimateMessages([])).toBe(0)
+  })
+})
+
+describe("session.compaction.shouldCompact", () => {
+  test("returns true when estimated tokens exceed capacity", async () => {
+    await using tmp = await tmpdir()
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const model = createModel({ context: 100_000, output: 32_000 })
+        // usable = 100k - 32k = 68k. Build messages well above that.
+        const big = "The quick brown fox jumps over the lazy dog. ".repeat(5_000)
+        const messages = [
+          { role: "user" as const, content: big },
+          { role: "assistant" as const, content: big },
+          { role: "user" as const, content: big },
+        ]
+        expect(await SessionCompaction.shouldCompact({ messages, model })).toBe(true)
+      },
+    })
+  })
+
+  test("returns false when estimated tokens within capacity", async () => {
+    await using tmp = await tmpdir()
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const model = createModel({ context: 200_000, output: 32_000 })
+        const messages = [
+          { role: "user" as const, content: "Hello" },
+          { role: "assistant" as const, content: "Hi!" },
+        ]
+        expect(await SessionCompaction.shouldCompact({ messages, model })).toBe(false)
+      },
+    })
+  })
+
+  test("includes system token count in threshold check", async () => {
+    await using tmp = await tmpdir()
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        // Small model: 2000 context, 200 output → usable = 1800
+        const model = createModel({ context: 2000, output: 200 })
+        // ~400 tokens of messages
+        const messages = [{ role: "user" as const, content: "The quick brown fox. ".repeat(100) }]
+        // Without system tokens: should be below 1800
+        const without = await SessionCompaction.shouldCompact({ messages, model })
+        expect(without).toBe(false)
+        // With large system overhead: should push it over
+        const with2000 = await SessionCompaction.shouldCompact({ messages, model, system: 2000 })
+        expect(with2000).toBe(true)
+      },
+    })
+  })
+})
+
+describe("util.token.budget", () => {
+  test("returns undefined for no context", () => {
+    expect(Token.budget(undefined)).toBeUndefined()
+    expect(Token.budget(0)).toBeUndefined()
+  })
+
+  test("uses 30% for small context windows", () => {
+    expect(Token.budget(32_000)).toBe(Math.floor(32_000 * 0.3))
+  })
+
+  test("uses 25% for large context windows", () => {
+    expect(Token.budget(200_000)).toBe(Math.floor(200_000 * Token.TRUNCATION_RATIO))
+  })
+
+  test("threshold is at 64k", () => {
+    // 64k should use 0.3
+    expect(Token.budget(64_000)).toBe(Math.floor(64_000 * 0.3))
+    // 65k should use TRUNCATION_RATIO
+    expect(Token.budget(65_000)).toBe(Math.floor(65_000 * Token.TRUNCATION_RATIO))
+  })
+})
+
 describe("util.token.estimate", () => {
-  test("estimates tokens from text (4 chars per token)", () => {
+  test("estimates tokens from text using tiktoken", () => {
     const text = "x".repeat(4000)
-    expect(Token.estimate(text)).toBe(1000)
+    const result = Token.estimate(text)
+    expect(result).toBeGreaterThan(0)
+    expect(result).toBeLessThan(4000)
   })
 
   test("estimates tokens from larger text", () => {
     const text = "y".repeat(20_000)
-    expect(Token.estimate(text)).toBe(5000)
+    const result = Token.estimate(text)
+    expect(result).toBeGreaterThan(0)
+    expect(result).toBeLessThan(20_000)
   })
 
   test("returns 0 for empty string", () => {
     expect(Token.estimate("")).toBe(0)
+  })
+
+  test("natural language produces reasonable estimates", () => {
+    const text = "The quick brown fox jumps over the lazy dog."
+    const result = Token.estimate(text)
+    // ~10 tokens for this sentence
+    expect(result).toBeGreaterThanOrEqual(8)
+    expect(result).toBeLessThanOrEqual(15)
   })
 })
 

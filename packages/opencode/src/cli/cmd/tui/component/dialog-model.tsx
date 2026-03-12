@@ -7,12 +7,18 @@ import { useDialog } from "@tui/ui/dialog"
 import { createDialogProviderOptions, DialogProvider } from "./dialog-provider"
 import { useKeybind } from "../context/keybind"
 import * as fuzzysort from "fuzzysort"
+import { formatTokens } from "@/util/format"
 
 export function useConnected() {
   const sync = useSync()
   return createMemo(() =>
     sync.data.provider.some((x) => x.id !== "opencode" || Object.values(x.models).some((y) => y.cost?.input !== 0)),
   )
+}
+
+function formatContext(ctx?: number) {
+  if (!ctx) return ""
+  return ` (${formatTokens(ctx)})`
 }
 
 export function DialogModel(props: { providerID?: string }) {
@@ -44,7 +50,7 @@ export function DialogModel(props: { providerID?: string }) {
           {
             key: item,
             value: { providerID: provider.id, modelID: model.id },
-            title: model.name ?? item.modelID,
+            title: (model.name ?? item.modelID) + formatContext(model.limit?.context),
             description: provider.name,
             category,
             disabled: provider.id === "opencode" && model.id.includes("-nano"),
@@ -80,7 +86,7 @@ export function DialogModel(props: { providerID?: string }) {
           filter(([_, info]) => (props.providerID ? info.providerID === props.providerID : true)),
           map(([model, info]) => ({
             value: { providerID: provider.id, modelID: model },
-            title: info.name ?? model,
+            title: (info.name ?? model) + formatContext(info.limit?.context),
             description: favorites.some((item) => item.providerID === provider.id && item.modelID === model)
               ? "(Favorite)"
               : undefined,
