@@ -4,6 +4,12 @@
     "opencode": {
       "options": {},
     },
+    "github-copilot": {
+      "options": {
+        "chunkTimeout": 600000,
+        "timeout": false,
+      },
+    },
   },
   "permission": {
     "edit": {

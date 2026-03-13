@@ -197,7 +197,9 @@ export namespace Provider {
         async getModel(sdk: any, modelID: string, _options?: Record<string, any>) {
           return sdk.responses(modelID)
         },
-        options: {},
+        options: {
+          chunkTimeout: 600_000,
+        },
       }
     },
     "github-copilot": async () => {
@@ -207,7 +209,9 @@ export namespace Provider {
           if (useLanguageModel(sdk)) return sdk.languageModel(modelID)
           return shouldUseCopilotResponsesApi(modelID) ? sdk.responses(modelID) : sdk.chat(modelID)
         },
-        options: {},
+        options: {
+          chunkTimeout: 600_000,
+        },
       }
     },
     azure: async (provider) => {

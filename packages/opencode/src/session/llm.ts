@@ -158,10 +158,13 @@ export namespace LLM {
       },
     )
 
-    const maxOutputTokens =
-      isOpenaiOauth || provider.id.includes("github-copilot")
-        ? undefined
-        : ProviderTransform.maxOutputTokens(input.model)
+    const maxOutputTokens = isOpenaiOauth
+      ? undefined
+      : provider.id.includes("github-copilot") && input.model.api.npm === "@ai-sdk/anthropic"
+        ? input.model.limit.output
+        : provider.id.includes("github-copilot")
+          ? undefined
+          : ProviderTransform.maxOutputTokens(input.model)
 
     const tools = await resolveTools(input)
 

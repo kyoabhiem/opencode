@@ -400,6 +400,11 @@ export namespace SessionProcessor {
             snapshot = undefined
           }
           const p = await MessageV2.parts(input.assistantMessage.id)
+          const reason = input.assistantMessage.error
+            ? `Tool execution aborted: ${input.assistantMessage.error.data?.message || input.assistantMessage.error.name}`
+            : needsCompaction
+              ? "Tool execution aborted: context overflow, compacting"
+              : "Tool execution aborted"
           for (const part of p) {
             if (part.type === "tool" && part.state.status !== "completed" && part.state.status !== "error") {
               await Session.updatePart({
@@ -407,7 +412,7 @@ export namespace SessionProcessor {
                 state: {
                   ...part.state,
                   status: "error",
-                  error: "Tool execution aborted",
+                  error: reason,
                   time: {
                     start: Date.now(),
                     end: Date.now(),
