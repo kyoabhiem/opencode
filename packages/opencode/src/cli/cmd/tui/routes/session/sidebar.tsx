@@ -42,11 +42,11 @@ export function Sidebar(props: { sessionID: string; overlay?: boolean }) {
   )
 
   const cost = createMemo(() => {
-    const total = messages().reduce((sum, x) => sum + (x.role === "assistant" ? x.cost : 0), 0)
+    const u = session().usage
     return new Intl.NumberFormat("en-US", {
       style: "currency",
       currency: "USD",
-    }).format(total)
+    }).format(u?.cost ?? 0)
   })
 
   const context = createMemo(() => {
@@ -62,26 +62,15 @@ export function Sidebar(props: { sessionID: string; overlay?: boolean }) {
   })
 
   const usage = createMemo(() => {
-    let input = 0
-    let output = 0
-    let read = 0
-    let write = 0
-    for (const msg of messages()) {
-      if (msg.role !== "assistant") continue
-      const parts = sync.data.part[msg.id] ?? []
-      for (const p of parts) {
-        if (p.type !== "step-finish") continue
-        input += p.tokens.input + p.tokens.reasoning
-        output += p.tokens.output
-        read += p.tokens.cache.read
-        write += p.tokens.cache.write
-      }
-    }
-    const total = input + output + read + write
+    const u = session().usage
+    if (!u) return undefined
+    const total = u.input + u.output + u.reasoning + u.cache.read + u.cache.write
     if (total === 0) return undefined
     return {
       total: formatTokens(total),
-      detail: `${formatTokens(input)}/${formatTokens(output)} · ${formatTokens(read)}/${formatTokens(write)}`,
+      io: `in ${formatTokens(u.input)} · out ${formatTokens(u.output)}`,
+      cache: `cache ${formatTokens(u.cache.read)}↓/${formatTokens(u.cache.write)}↑`,
+      reasoning: u.reasoning > 0 ? `think ${formatTokens(u.reasoning)}` : null,
     }
   })
 
@@ -138,7 +127,11 @@ export function Sidebar(props: { sessionID: string; overlay?: boolean }) {
                   <b>Session</b>
                 </text>
                 <text fg={theme.textMuted}>{usage()!.total} tokens</text>
-                <text fg={theme.textMuted}>{usage()!.detail}</text>
+                <text fg={theme.textMuted}>{usage()!.io}</text>
+                <text fg={theme.textMuted}>{usage()!.cache}</text>
+                <Show when={usage()!.reasoning}>
+                  <text fg={theme.textMuted}>{usage()!.reasoning}</text>
+                </Show>
               </box>
             </Show>
             <Show when={mcpEntries().length > 0}>

@@ -9,7 +9,7 @@ import { Config } from "../config/config"
 import { Flag } from "../flag/flag"
 import { Installation } from "../installation"
 
-import { Database, NotFoundError, eq, and, or, gte, isNull, desc, like, inArray, lt } from "../storage/db"
+import { Database, NotFoundError, eq, and, or, gte, isNull, desc, like, inArray, lt, sql } from "../storage/db"
 import type { SQL } from "../storage/db"
 import { SessionTable, MessageTable, PartTable } from "./session.sql"
 import { ProjectTable } from "../project/project.sql"
@@ -63,6 +63,19 @@ export namespace Session {
         : undefined
     const share = row.share_url ? { url: row.share_url } : undefined
     const revert = row.revert ?? undefined
+    const usage =
+      row.usage_input || row.usage_output || row.usage_reasoning || row.usage_cache_read || row.usage_cache_write
+        ? {
+            input: row.usage_input ?? 0,
+            output: row.usage_output ?? 0,
+            reasoning: row.usage_reasoning ?? 0,
+            cache: {
+              read: row.usage_cache_read ?? 0,
+              write: row.usage_cache_write ?? 0,
+            },
+            cost: row.usage_cost ?? 0,
+          }
+        : undefined
     return {
       id: row.id,
       slug: row.slug,
@@ -75,6 +88,7 @@ export namespace Session {
       summary,
       share,
       revert,
+      usage,
       permission: row.permission ?? undefined,
       time: {
         created: row.time_created,
@@ -102,6 +116,12 @@ export namespace Session {
       summary_diffs: info.summary?.diffs,
       revert: info.revert ?? null,
       permission: info.permission,
+      usage_input: info.usage?.input ?? 0,
+      usage_output: info.usage?.output ?? 0,
+      usage_reasoning: info.usage?.reasoning ?? 0,
+      usage_cache_read: info.usage?.cache?.read ?? 0,
+      usage_cache_write: info.usage?.cache?.write ?? 0,
+      usage_cost: info.usage?.cost ?? 0,
       time_created: info.time.created,
       time_updated: info.time.updated,
       time_compacting: info.time.compacting,
@@ -155,6 +175,18 @@ export namespace Session {
           partID: PartID.zod.optional(),
           snapshot: z.string().optional(),
           diff: z.string().optional(),
+        })
+        .optional(),
+      usage: z
+        .object({
+          input: z.number(),
+          output: z.number(),
+          reasoning: z.number(),
+          cache: z.object({
+            read: z.number(),
+            write: z.number(),
+          }),
+          cost: z.number(),
         })
         .optional(),
     })
@@ -252,6 +284,8 @@ export namespace Session {
       })
       const msgs = await messages({ sessionID: input.sessionID })
       const idMap = new Map<string, MessageID>()
+      const tokens = { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } }
+      let cost = 0
 
       for (const msg of msgs) {
         if (input.messageID && msg.info.id >= input.messageID) break
@@ -267,6 +301,14 @@ export namespace Session {
         })
 
         for (const part of msg.parts) {
+          if (part.type === "step-finish") {
+            tokens.input += part.tokens.input
+            tokens.output += part.tokens.output
+            tokens.reasoning += part.tokens.reasoning
+            tokens.cache.read += part.tokens.cache.read
+            tokens.cache.write += part.tokens.cache.write
+            cost += part.cost
+          }
           await updatePart({
             ...part,
             id: PartID.ascending(),
@@ -274,6 +316,9 @@ export namespace Session {
             sessionID: session.id,
           })
         }
+      }
+      if (tokens.input || tokens.output || tokens.reasoning || tokens.cache.read || tokens.cache.write) {
+        addUsage(session.id, tokens, cost)
       }
       return session
     },
@@ -711,6 +756,19 @@ export namespace Session {
       messageID: MessageID.zod,
     }),
     async (input) => {
+      const parts = await MessageV2.parts(input.messageID)
+      const tokens = { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } }
+      let cost = 0
+      for (const part of parts) {
+        if (part.type === "step-finish") {
+          tokens.input += part.tokens.input
+          tokens.output += part.tokens.output
+          tokens.reasoning += part.tokens.reasoning
+          tokens.cache.read += part.tokens.cache.read
+          tokens.cache.write += part.tokens.cache.write
+          cost += part.cost
+        }
+      }
       // CASCADE delete handles parts automatically
       Database.use((db) => {
         db.delete(MessageTable)
@@ -723,6 +781,9 @@ export namespace Session {
           }),
         )
       })
+      if (tokens.input || tokens.output || tokens.reasoning || tokens.cache.read || tokens.cache.write) {
+        subtractUsage(input.sessionID, tokens, cost)
+      }
       return input.messageID
     },
   )
@@ -749,6 +810,43 @@ export namespace Session {
       return input.partID
     },
   )
+
+  type UsageTokens = {
+    input: number
+    output: number
+    reasoning: number
+    cache: { read: number; write: number }
+  }
+
+  function mutateUsage(sessionID: SessionID, tokens: UsageTokens, cost: number, sign: 1 | -1) {
+    Database.use((db) => {
+      const row = db
+        .update(SessionTable)
+        .set({
+          usage_input: sql`coalesce(${SessionTable.usage_input}, 0) + ${tokens.input * sign}`,
+          usage_output: sql`coalesce(${SessionTable.usage_output}, 0) + ${tokens.output * sign}`,
+          usage_reasoning: sql`coalesce(${SessionTable.usage_reasoning}, 0) + ${tokens.reasoning * sign}`,
+          usage_cache_read: sql`coalesce(${SessionTable.usage_cache_read}, 0) + ${tokens.cache.read * sign}`,
+          usage_cache_write: sql`coalesce(${SessionTable.usage_cache_write}, 0) + ${tokens.cache.write * sign}`,
+          usage_cost: sql`coalesce(${SessionTable.usage_cost}, 0) + ${cost * sign}`,
+          time_updated: Date.now(),
+        })
+        .where(eq(SessionTable.id, sessionID))
+        .returning()
+        .get()
+      if (!row) return
+      const info = fromRow(row)
+      Database.effect(() => Bus.publish(Event.Updated, { info }))
+    })
+  }
+
+  export function addUsage(sessionID: SessionID, tokens: UsageTokens, cost: number) {
+    mutateUsage(sessionID, tokens, cost, 1)
+  }
+
+  export function subtractUsage(sessionID: SessionID, tokens: UsageTokens, cost: number) {
+    mutateUsage(sessionID, tokens, cost, -1)
+  }
 
   const UpdatePartInput = MessageV2.Part
 

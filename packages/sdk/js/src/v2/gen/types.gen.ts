@@ -836,6 +836,16 @@ export type Session = {
     snapshot?: string
     diff?: string
   }
+  usage?: {
+    input: number
+    output: number
+    reasoning: number
+    cache: {
+      read: number
+      write: number
+    }
+    cost: number
+  }
 }
 
 export type EventSessionCreated = {
@@ -1706,6 +1716,16 @@ export type GlobalSession = {
     partID?: string
     snapshot?: string
     diff?: string
+  }
+  usage?: {
+    input: number
+    output: number
+    reasoning: number
+    cache: {
+      read: number
+      write: number
+    }
+    cost: number
   }
   project: ProjectSummary | null
 }

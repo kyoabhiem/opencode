@@ -44,9 +44,12 @@ export namespace SessionCompaction {
   export async function isOverflow(input: { tokens: MessageV2.Assistant["tokens"]; model: Provider.Model }) {
     const usable = await capacity(input.model)
     if (usable === undefined) return false
-    const count =
-      input.tokens.total ||
-      input.tokens.input + input.tokens.output + input.tokens.cache.read + input.tokens.cache.write
+    // When limit.input is set, only count input tokens against that limit
+    // (output/thinking tokens don't consume the input window).
+    const count = input.model.limit.input
+      ? input.tokens.input + input.tokens.cache.read + input.tokens.cache.write
+      : input.tokens.total ||
+        input.tokens.input + input.tokens.output + input.tokens.cache.read + input.tokens.cache.write
     return count >= usable
   }
 

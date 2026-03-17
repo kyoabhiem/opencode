@@ -55,6 +55,19 @@ export async function CopilotAuthPlugin(input: PluginInput): Promise<Hooks> {
             // Messages API supports full 200k context for Claude models
             if (claude) model.limit = { ...model.limit, context: 200_000 }
           }
+
+          // Claude Opus 4.6 with 1M context window via /v1/messages
+          const opus = provider.models["claude-opus-4.6"]
+          if (opus) {
+            provider.models["claude-opus-4.6-1m"] = {
+              ...opus,
+              id: "claude-opus-4.6-1m",
+              name: "Claude Opus 4.6 1M",
+              api: { ...opus.api, id: "claude-opus-4.6" },
+              cost: { ...opus.cost, cache: { ...opus.cost.cache } },
+              limit: { ...opus.limit, context: 1_000_000, output: 128_000 },
+            }
+          }
         }
 
         return {
