@@ -56,6 +56,19 @@ export async function CopilotAuthPlugin(input: PluginInput): Promise<Hooks> {
             if (claude) model.limit = { ...model.limit, context: 200_000 }
           }
 
+          // Claude Sonnet 4.6 with 1M context window via /v1/messages
+          const sonnet = provider.models["claude-sonnet-4.6"]
+          if (sonnet) {
+            provider.models["claude-sonnet-4.6-1m"] = {
+              ...sonnet,
+              id: "claude-sonnet-4.6-1m",
+              name: "Claude Sonnet 4.6 1M",
+              api: { ...sonnet.api, id: "claude-sonnet-4.6" },
+              cost: { ...sonnet.cost, cache: { ...sonnet.cost.cache } },
+              limit: { ...sonnet.limit, context: 1_000_000, output: 64_000 },
+            }
+          }
+
           // Claude Opus 4.6 with 1M context window via /v1/messages
           const opus = provider.models["claude-opus-4.6"]
           if (opus) {
