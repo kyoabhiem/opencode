@@ -10,6 +10,8 @@ afterEach(async () => {
 })
 
 describe("tool.registry", () => {
+  // Config.waitForDependencies runs `bun install` in the temp dir which can
+  // take several seconds, especially under CI load.
   test("loads tools from .opencode/tool (singular)", async () => {
     await using tmp = await tmpdir({
       init: async (dir) => {
@@ -42,7 +44,7 @@ describe("tool.registry", () => {
         expect(ids).toContain("hello")
       },
     })
-  })
+  }, 30_000)
 
   test("loads tools from .opencode/tools (plural)", async () => {
     await using tmp = await tmpdir({
@@ -76,7 +78,7 @@ describe("tool.registry", () => {
         expect(ids).toContain("hello")
       },
     })
-  })
+  }, 30_000)
 
   test("loads tools with external dependencies without crashing", async () => {
     await using tmp = await tmpdir({
@@ -122,5 +124,5 @@ describe("tool.registry", () => {
         expect(ids).toContain("cowsay")
       },
     })
-  })
+  }, 30_000)
 })

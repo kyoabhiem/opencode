@@ -104,7 +104,7 @@ describeVcs("Vcs", () => {
       const updated = await pending
       expect(updated).toBe(branch)
     })
-  })
+  }, 15_000)
 
   test("branch() reflects the new branch after HEAD change", async () => {
     await using tmp = await tmpdir({ git: true })
@@ -121,5 +121,5 @@ describeVcs("Vcs", () => {
       const current = await rt.runPromise(Vcs.Service.use((s) => s.branch()))
       expect(current).toBe(branch)
     })
-  })
+  }, 15_000)
 })

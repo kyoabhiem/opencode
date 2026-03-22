@@ -7,6 +7,7 @@ function input() {
     client: {
       session: {
         get: async () => ({ data: {} }),
+        message: async () => ({ data: { parts: [] } }),
       },
     },
     project: {},
@@ -38,7 +39,8 @@ function provider() {
           },
         },
         limit: {
-          context: 128_000,
+          context: 200_000,
+          input: 128_000,
           output: 32_000,
         },
       },
@@ -60,7 +62,8 @@ function provider() {
           },
         },
         limit: {
-          context: 128_000,
+          context: 144_000,
+          input: 128_000,
           output: 64_000,
         },
       },
@@ -87,6 +90,7 @@ function provider() {
         }
         limit: {
           context: number
+          input?: number
           output: number
         }
       }
@@ -119,6 +123,41 @@ describe("plugin.copilot", () => {
     expect(model.api.url).toBe("https://api.githubcopilot.com/v1")
     expect(model.limit.context).toBe(1_000_000)
     expect(model.limit.output).toBe(64_000)
+    expect(model.limit.input).toBeUndefined()
+  })
+
+  test("drops snapshot input limit for Claude 200k models", async () => {
+    const hooks = await CopilotAuthPlugin(input())
+    if (!hooks.auth?.loader) throw new Error("Missing auth loader")
+
+    const p = provider()
+    await hooks.auth.loader(
+      async () => ({
+        type: "oauth",
+        access: "test-access",
+        refresh: "test-refresh",
+        expires: 0,
+      }),
+      p as never,
+    )
+
+    // Standard Claude models should have input dropped
+    const sonnet = p.models["claude-sonnet-4.6"]
+    expect(sonnet.limit.context).toBe(200_000)
+    expect(sonnet.limit.output).toBe(32_000)
+    expect(sonnet.limit.input).toBeUndefined()
+
+    const opus = p.models["claude-opus-4.6"]
+    expect(opus.limit.context).toBe(200_000)
+    expect(opus.limit.output).toBe(64_000)
+    expect(opus.limit.input).toBeUndefined()
+
+    // 1M variants should also have no input limit
+    const sonnet1m = p.models["claude-sonnet-4.6-1m"]
+    expect(sonnet1m.limit.input).toBeUndefined()
+
+    const opus1m = p.models["claude-opus-4.6-1m"]
+    expect(opus1m.limit.input).toBeUndefined()
   })
 
   test("uses existing Copilot anthropic beta header", async () => {
@@ -140,6 +179,8 @@ describe("plugin.copilot", () => {
         },
         message: {
           role: "user",
+          sessionID: "sess",
+          id: "msg1",
         },
       } as never,
       out,
@@ -163,6 +204,8 @@ describe("plugin.copilot", () => {
         },
         message: {
           role: "user",
+          sessionID: "sess",
+          id: "msg2",
         },
       } as never,
       plain,

@@ -52,8 +52,10 @@ export async function CopilotAuthPlugin(input: PluginInput): Promise<Hooks> {
 
             model.api.url = url
             model.api.npm = claude ? "@ai-sdk/anthropic" : "@ai-sdk/github-copilot"
-            // Messages API supports full 200k context for Claude models
-            if (claude) model.limit = { ...model.limit, context: 200_000 }
+            // Messages API supports full 200k context for Claude models.
+            // Drop snapshot's input limit — it reflects the Completions API,
+            // not the Messages API routed via /v1.
+            if (claude) model.limit = { context: 200_000, output: model.limit.output }
           }
 
           // Claude Sonnet 4.6 with 1M context window via /v1/messages
@@ -65,7 +67,7 @@ export async function CopilotAuthPlugin(input: PluginInput): Promise<Hooks> {
               name: "Claude Sonnet 4.6 1M",
               api: { ...sonnet.api, id: "claude-sonnet-4.6" },
               cost: { ...sonnet.cost, cache: { ...sonnet.cost.cache } },
-              limit: { ...sonnet.limit, context: 1_000_000, output: 64_000 },
+              limit: { context: 1_000_000, output: 64_000 },
             }
           }
 
@@ -78,7 +80,7 @@ export async function CopilotAuthPlugin(input: PluginInput): Promise<Hooks> {
               name: "Claude Opus 4.6 1M",
               api: { ...opus.api, id: "claude-opus-4.6" },
               cost: { ...opus.cost, cache: { ...opus.cost.cache } },
-              limit: { ...opus.limit, context: 1_000_000, output: 128_000 },
+              limit: { context: 1_000_000, output: 128_000 },
             }
           }
         }

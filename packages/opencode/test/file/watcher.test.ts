@@ -176,7 +176,8 @@ describeWatcher("FileWatcher", () => {
     // Start and immediately stop the watcher (withWatcher disposes on exit)
     await withWatcher(tmp.path, Effect.void)
 
-    // Now write a file — no watcher should be listening
+    // Now write a file — no watcher should be listening.
+    // Bus.subscribe needs Instance context, so wrap in Instance.provide.
     await Instance.provide({
       directory: tmp.path,
       fn: () =>
