@@ -12,7 +12,7 @@ import {
   jsonSchema,
 } from "ai"
 import { mergeDeep, pipe } from "remeda"
-import { GitLabWorkflowLanguageModel } from "gitlab-ai-provider"
+// gitlab-ai-provider is lazy-loaded in provider.ts; use duck-type check instead of instanceof
 import { ProviderTransform } from "@/provider/transform"
 import { Config } from "@/config/config"
 import { Instance } from "@/project/instance"
@@ -191,8 +191,14 @@ export namespace LLM {
     // Wire up toolExecutor for DWS workflow models so that tool calls
     // from the workflow service are executed via opencode's tool system
     // and results sent back over the WebSocket.
-    if (language instanceof GitLabWorkflowLanguageModel) {
-      const workflowModel = language
+    if ("toolExecutor" in language) {
+      const workflowModel = language as {
+        toolExecutor: (
+          name: string,
+          args: string,
+          id: string,
+        ) => Promise<{ result: string; error?: string; metadata?: unknown; title?: string }>
+      }
       workflowModel.toolExecutor = async (toolName, argsJson, _requestID) => {
         const t = tools[toolName]
         if (!t || !t.execute) {
