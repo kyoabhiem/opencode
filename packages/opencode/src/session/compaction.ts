@@ -13,6 +13,7 @@ import { fn } from "@/util/fn"
 import { Agent } from "@/agent/agent"
 import { Plugin } from "@/plugin"
 import { Config } from "@/config/config"
+import { Database } from "@/storage/db"
 import { ProviderTransform } from "@/provider/transform"
 import { ModelID, ProviderID } from "@/provider/schema"
 
@@ -103,7 +104,7 @@ export namespace SessionCompaction {
     const msgs = await Session.messages({ sessionID: input.sessionID })
     let total = 0
     let pruned = 0
-    const toPrune = []
+    const toPrune: MessageV2.ToolPart[] = []
     let turns = 0
 
     loop: for (let msgIndex = msgs.length - 1; msgIndex >= 0; msgIndex--) {
@@ -129,12 +130,14 @@ export namespace SessionCompaction {
     }
     log.info("found", { pruned, total })
     if (pruned > PRUNE_MINIMUM) {
-      for (const part of toPrune) {
-        if (part.state.status === "completed") {
-          part.state.time.compacted = Date.now()
-          await Session.updatePart(part)
+      Database.transaction(() => {
+        for (const part of toPrune) {
+          if (part.state.status === "completed") {
+            part.state.time.compacted = Date.now()
+            Session.updatePart.force(part)
+          }
         }
-      }
+      })
       log.info("pruned", { count: toPrune.length })
     }
   }

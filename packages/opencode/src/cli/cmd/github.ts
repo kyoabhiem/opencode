@@ -3,10 +3,10 @@ import { exec } from "child_process"
 import { Filesystem } from "../../util/filesystem"
 import * as prompts from "@clack/prompts"
 import { map, pipe, sortBy, values } from "remeda"
-import { Octokit } from "@octokit/rest"
-import { graphql } from "@octokit/graphql"
-import * as core from "@actions/core"
-import * as github from "@actions/github"
+// Lazy-loaded in handler — these are heavy and only needed by `github run/install`
+import type { Octokit } from "@octokit/rest"
+import type { graphql } from "@octokit/graphql"
+import type * as core from "@actions/core"
 import type { Context } from "@actions/github/lib/context"
 import type {
   IssueCommentEvent,
@@ -435,6 +435,11 @@ export const GithubRunCommand = cmd({
   async handler(args) {
     await bootstrap(process.cwd(), async () => {
       const isMock = args.token || args.event
+
+      const core = await import("@actions/core")
+      const github = await import("@actions/github")
+      const { Octokit } = await import("@octokit/rest")
+      const { graphql } = await import("@octokit/graphql")
 
       const context = isMock ? (JSON.parse(args.event!) as Context) : github.context
       if (!SUPPORTED_EVENTS.includes(context.eventName as (typeof SUPPORTED_EVENTS)[number])) {
