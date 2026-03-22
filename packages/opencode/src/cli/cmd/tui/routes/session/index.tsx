@@ -319,6 +319,19 @@ export function Session() {
     }, 50)
   }
 
+  async function older() {
+    if (!scroll) return
+    const before = scroll.scrollHeight
+    const loaded = await sync.session.older(route.sessionID)
+    if (!loaded) return
+    // preserve scroll position after prepending
+    setTimeout(() => {
+      if (!scroll || scroll.isDestroyed) return
+      const delta = scroll.scrollHeight - before
+      if (delta > 0) scroll.scrollBy(delta)
+    }, 50)
+  }
+
   const local = useLocal()
 
   function moveFirstChild() {
@@ -732,6 +745,17 @@ export function Session() {
       },
     },
     {
+      title: "Load older messages",
+      value: "session.load_older",
+      keybind: "messages_load_older",
+      category: "Session",
+      enabled: !!sync.data.pagination[route.sessionID]?.more,
+      onSelect: async (dialog) => {
+        dialog.clear()
+        await older()
+      },
+    },
+    {
       title: "Last message",
       value: "session.last",
       keybind: "messages_last",
@@ -1056,6 +1080,7 @@ export function Session() {
               viewportOptions={{
                 paddingRight: showScrollbar() ? 1 : 0,
               }}
+              viewportCulling={true}
               verticalScrollbarOptions={{
                 paddingLeft: 1,
                 visible: showScrollbar(),
@@ -1069,6 +1094,32 @@ export function Session() {
               flexGrow={1}
               scrollAcceleration={scrollAcceleration()}
             >
+              <Show when={sync.data.pagination[route.sessionID]}>
+                {(pg) => (
+                  <Show
+                    when={pg().more}
+                    fallback={
+                      <Show when={messages().length > 0}>
+                        <box paddingLeft={2} paddingBottom={1}>
+                          <text fg={theme.textMuted}>── Beginning of conversation ──</text>
+                        </box>
+                      </Show>
+                    }
+                  >
+                    <box paddingLeft={2} paddingBottom={1} onMouseUp={() => older()}>
+                      <Show
+                        when={!pg().loading}
+                        fallback={<text fg={theme.textMuted}>── Loading older messages… ──</text>}
+                      >
+                        <text fg={theme.textMuted}>
+                          ── <span style={{ fg: theme.text }}>{keybind.print("messages_load_older")}</span> load older
+                          messages ──
+                        </text>
+                      </Show>
+                    </box>
+                  </Show>
+                )}
+              </Show>
               <For each={messages()}>
                 {(message, index) => (
                   <Switch>

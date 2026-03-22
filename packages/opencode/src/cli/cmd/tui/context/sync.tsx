@@ -64,6 +64,13 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
       part: {
         [messageID: string]: Part[]
       }
+      pagination: {
+        [sessionID: string]: {
+          cursor?: string
+          more: boolean
+          loading: boolean
+        }
+      }
       lsp: LspStatus[]
       mcp: {
         [key: string]: McpStatus
@@ -96,6 +103,7 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
       todo: {},
       message: {},
       part: {},
+      pagination: {},
       lsp: [],
       mcp: {},
       mcp_resource: {},
@@ -253,7 +261,8 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
             }),
           )
           const updated = store.message[event.properties.info.sessionID]
-          if (updated.length > 100) {
+          const cap = store.pagination[event.properties.info.sessionID]?.cursor ? 500 : 100
+          if (updated.length > cap) {
             const oldest = updated[0]
             batch(() => {
               setStore(
@@ -442,6 +451,7 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
     })
 
     const fullSyncedSessions = new Set<string>()
+    const SYNC_CAP = 200
     const result = {
       data: store,
       set: setStore,
@@ -475,6 +485,8 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
             sdk.client.session.todo({ sessionID }),
             sdk.client.session.diff({ sessionID }),
           ])
+          const cursor = messages.response?.headers?.get("X-Next-Cursor") ?? undefined
+          const more = !!cursor
           setStore(
             produce((draft) => {
               const match = Binary.search(draft.session, sessionID, (s) => s.id)
@@ -486,9 +498,47 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
                 draft.part[message.info.id] = message.parts
               }
               draft.session_diff[sessionID] = diff.data ?? []
+              draft.pagination[sessionID] = { cursor, more, loading: false }
             }),
           )
           fullSyncedSessions.add(sessionID)
+          if (fullSyncedSessions.size > SYNC_CAP) {
+            const first = fullSyncedSessions.values().next().value
+            if (first) fullSyncedSessions.delete(first)
+          }
+        },
+        async older(sessionID: string) {
+          const pg = store.pagination[sessionID]
+          if (!pg || !pg.more || pg.loading || !pg.cursor) return false
+          setStore("pagination", sessionID, "loading", true)
+          const res = await sdk.client.session
+            .messages({
+              sessionID,
+              limit: 50,
+              before: pg.cursor,
+            })
+            .catch(() => undefined)
+          if (!res?.data?.length) {
+            setStore("pagination", sessionID, "loading", false)
+            return false
+          }
+          const cursor = res.response?.headers?.get("X-Next-Cursor") ?? undefined
+          setStore(
+            produce((draft) => {
+              const msgs = draft.message[sessionID] ?? []
+              const items = res.data!.map((x) => x.info)
+              msgs.unshift(...items)
+              for (const msg of res.data!) {
+                draft.part[msg.info.id] = msg.parts
+              }
+              draft.pagination[sessionID] = {
+                cursor,
+                more: !!cursor,
+                loading: false,
+              }
+            }),
+          )
+          return true
         },
       },
       workspace: {
