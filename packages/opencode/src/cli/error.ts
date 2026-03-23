@@ -1,12 +1,17 @@
 import { ConfigMarkdown } from "@/config/markdown"
 import { Config } from "../config/config"
-import { MCP } from "../mcp"
-import { Provider } from "../provider/provider"
 import { UI } from "./ui"
 
-export function FormatError(input: unknown) {
+// MCP and Provider are lazy-imported to avoid pulling in @modelcontextprotocol/sdk
+// and the full provider module on every startup (~12MB RSS). FormatError is a cold
+// path — only called when an error actually occurs.
+
+export async function FormatError(input: unknown) {
+  const { MCP } = await import("../mcp")
   if (MCP.Failed.isInstance(input))
     return `MCP server "${input.data.name}" failed. Note, opencode does not support MCP authentication yet.`
+
+  const { Provider } = await import("../provider/provider")
   if (Provider.ModelNotFoundError.isInstance(input)) {
     const { providerID, modelID, suggestions } = input.data
     return [

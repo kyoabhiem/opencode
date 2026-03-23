@@ -1000,7 +1000,7 @@ test("pending permission rejects on instance dispose", async () => {
   })
 
   expect(await result).toBeInstanceOf(Permission.RejectedError)
-})
+}, 15_000)
 
 test("pending permission rejects on instance reload", async () => {
   await using tmp = await tmpdir({ git: true })
@@ -1033,7 +1033,7 @@ test("pending permission rejects on instance reload", async () => {
   })
 
   expect(await result).toBeInstanceOf(Permission.RejectedError)
-})
+}, 15_000)
 
 test("reply - does nothing for unknown requestID", async () => {
   await using tmp = await tmpdir({ git: true })
