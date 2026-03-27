@@ -9,7 +9,7 @@ import { Config } from "../config/config"
 import { Flag } from "../flag/flag"
 import { Installation } from "../installation"
 
-import { Database, NotFoundError, eq, and, gte, isNull, desc, like, inArray, lt } from "../storage/db"
+import { Database, NotFoundError, eq, and, gte, isNull, desc, like, inArray, lt, sql } from "../storage/db"
 import { SyncEvent } from "../sync"
 import type { SQL } from "../storage/db"
 import { SessionTable } from "./session.sql"
@@ -64,6 +64,19 @@ export namespace Session {
         : undefined
     const share = row.share_url ? { url: row.share_url } : undefined
     const revert = row.revert ?? undefined
+    const usage =
+      row.usage_input || row.usage_output || row.usage_reasoning || row.usage_cache_read || row.usage_cache_write
+        ? {
+            input: row.usage_input ?? 0,
+            output: row.usage_output ?? 0,
+            reasoning: row.usage_reasoning ?? 0,
+            cache: {
+              read: row.usage_cache_read ?? 0,
+              write: row.usage_cache_write ?? 0,
+            },
+            cost: row.usage_cost ?? 0,
+          }
+        : undefined
     return {
       id: row.id,
       slug: row.slug,
@@ -76,6 +89,7 @@ export namespace Session {
       summary,
       share,
       revert,
+      usage,
       permission: row.permission ?? undefined,
       time: {
         created: row.time_created,
@@ -103,6 +117,12 @@ export namespace Session {
       summary_diffs: info.summary?.diffs,
       revert: info.revert ?? null,
       permission: info.permission,
+      usage_input: info.usage?.input ?? 0,
+      usage_output: info.usage?.output ?? 0,
+      usage_reasoning: info.usage?.reasoning ?? 0,
+      usage_cache_read: info.usage?.cache?.read ?? 0,
+      usage_cache_write: info.usage?.cache?.write ?? 0,
+      usage_cost: info.usage?.cost ?? 0,
       time_created: info.time.created,
       time_updated: info.time.updated,
       time_compacting: info.time.compacting,
@@ -156,6 +176,18 @@ export namespace Session {
           partID: PartID.zod.optional(),
           snapshot: z.string().optional(),
           diff: z.string().optional(),
+        })
+        .optional(),
+      usage: z
+        .object({
+          input: z.number(),
+          output: z.number(),
+          reasoning: z.number(),
+          cache: z.object({
+            read: z.number(),
+            write: z.number(),
+          }),
+          cost: z.number(),
         })
         .optional(),
     })
@@ -717,7 +749,7 @@ export namespace Session {
       // It looks like OpenCode's cost calculation assumes all providers return inputTokens the same way Anthropic does (I'm guessing getUsage logic was originally implemented with anthropic), so it's causing incorrect cost calculation for OpenRouter and others.
       const excludesCachedTokens = !!(input.metadata?.["anthropic"] || input.metadata?.["bedrock"])
       const adjustedInputTokens = safe(
-        excludesCachedTokens ? inputTokens : inputTokens - cacheReadInputTokens - cacheWriteInputTokens,
+        excludesCachedTokens ? inputTokens : Math.max(0, inputTokens - cacheReadInputTokens - cacheWriteInputTokens),
       )
 
       const total = iife(() => {
@@ -764,6 +796,43 @@ export namespace Session {
       }
     },
   )
+
+  type UsageTokens = {
+    input: number
+    output: number
+    reasoning: number
+    cache: { read: number; write: number }
+  }
+
+  function mutateUsage(sessionID: SessionID, tokens: UsageTokens, cost: number, sign: 1 | -1) {
+    Database.use((db) => {
+      const row = db
+        .update(SessionTable)
+        .set({
+          usage_input: sql`coalesce(${SessionTable.usage_input}, 0) + ${tokens.input * sign}`,
+          usage_output: sql`coalesce(${SessionTable.usage_output}, 0) + ${tokens.output * sign}`,
+          usage_reasoning: sql`coalesce(${SessionTable.usage_reasoning}, 0) + ${tokens.reasoning * sign}`,
+          usage_cache_read: sql`coalesce(${SessionTable.usage_cache_read}, 0) + ${tokens.cache.read * sign}`,
+          usage_cache_write: sql`coalesce(${SessionTable.usage_cache_write}, 0) + ${tokens.cache.write * sign}`,
+          usage_cost: sql`coalesce(${SessionTable.usage_cost}, 0) + ${cost * sign}`,
+          time_updated: Date.now(),
+        })
+        .where(eq(SessionTable.id, sessionID))
+        .returning()
+        .get()
+      if (!row) return
+      const info = fromRow(row)
+      Database.effect(() => Bus.publish(Event.Updated, { sessionID, info }))
+    })
+  }
+
+  export function addUsage(sessionID: SessionID, tokens: UsageTokens, cost: number) {
+    mutateUsage(sessionID, tokens, cost, 1)
+  }
+
+  export function subtractUsage(sessionID: SessionID, tokens: UsageTokens, cost: number) {
+    mutateUsage(sessionID, tokens, cost, -1)
+  }
 
   export class BusyError extends Error {
     constructor(public readonly sessionID: string) {

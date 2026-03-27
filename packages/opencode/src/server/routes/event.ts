@@ -62,9 +62,9 @@ export const EventRoutes = lazy(() =>
           log.info("event disconnected")
         }
 
-        const unsub = Bus.subscribeAll((event) => {
-          q.push(JSON.stringify(event))
-          if (event.type === Bus.InstanceDisposed.type) {
+        const unsub = Bus.subscribeAllSerialized((data) => {
+          q.push(data)
+          if (data.includes('"server.instance.disposed"')) {
             stop()
           }
         })

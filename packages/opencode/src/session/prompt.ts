@@ -716,6 +716,15 @@ export namespace SessionPrompt {
         sysTokens = system.reduce((sum, s) => sum + Token.estimate(s), 0)
         sysTokenCache = { parts: system, tokens: sysTokens }
       }
+      if (step > 1 && (await SessionCompaction.shouldCompact({ messages: pending, model, system: sysTokens }))) {
+        await SessionCompaction.create({
+          sessionID,
+          agent: lastUser.agent,
+          model: lastUser.model,
+          auto: true,
+        })
+        continue
+      }
       const result = await processor.process({
         user: lastUser,
         agent,

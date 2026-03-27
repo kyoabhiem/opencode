@@ -181,4 +181,18 @@ export namespace Bus {
   export function subscribeAll(callback: (event: any) => unknown) {
     return runSync((svc) => svc.subscribeAllCallback(callback))
   }
+
+  /** Subscribe to all events as pre-serialized JSON. Caches stringify per event ref to avoid redundant work across subscribers. */
+  export function subscribeAllSerialized(callback: (data: string) => void) {
+    let cached: { ref: any; data: string } | undefined
+    return subscribeAll((event) => {
+      if (cached && cached.ref === event) {
+        callback(cached.data)
+        return
+      }
+      const data = JSON.stringify(event)
+      cached = { ref: event, data }
+      callback(data)
+    })
+  }
 }

@@ -31,22 +31,60 @@ export namespace SessionCompaction {
 
   const COMPACTION_BUFFER = 20_000
 
-  export async function isOverflow(input: { tokens: MessageV2.Assistant["tokens"]; model: Provider.Model }) {
+  async function capacity(model: Provider.Model) {
     const config = await Config.get()
-    if (config.compaction?.auto === false) return false
-    const context = input.model.limit.context
-    if (context === 0) return false
+    if (config.compaction?.auto === false) return undefined
+    const context = model.limit.context
+    if (context === 0) return undefined
+    const output = ProviderTransform.maxOutputTokens(model)
+    const reserved = config.compaction?.reserved ?? Math.min(COMPACTION_BUFFER, output)
+    const gap = model.limit.input ? context - model.limit.input : 0
+    return model.limit.input ? model.limit.input - reserved - Math.max(0, output - gap) : context - output
+  }
 
-    const count =
-      input.tokens.total ||
-      input.tokens.input + input.tokens.output + input.tokens.cache.read + input.tokens.cache.write
-
-    const reserved =
-      config.compaction?.reserved ?? Math.min(COMPACTION_BUFFER, ProviderTransform.maxOutputTokens(input.model))
-    const usable = input.model.limit.input
-      ? input.model.limit.input - reserved
-      : context - ProviderTransform.maxOutputTokens(input.model)
+  export async function isOverflow(input: { tokens: MessageV2.Assistant["tokens"]; model: Provider.Model }) {
+    const usable = await capacity(input.model)
+    if (usable === undefined) return false
+    const count = input.model.limit.input
+      ? input.tokens.input + input.tokens.cache.read + input.tokens.cache.write
+      : input.tokens.total ||
+        input.tokens.input + input.tokens.output + input.tokens.cache.read + input.tokens.cache.write
     return count >= usable
+  }
+
+  export function estimateMessages(messages: import("ai").ModelMessage[]): number {
+    let total = 0
+    for (const msg of messages) {
+      if (typeof msg.content === "string") {
+        total += Token.estimate(msg.content)
+        continue
+      }
+      if (Array.isArray(msg.content)) {
+        for (const part of msg.content) {
+          if ("text" in part && typeof part.text === "string") total += Token.estimate(part.text)
+          else if ("value" in part && typeof part.value === "string") total += Token.estimate(part.value)
+          else if ("input" in part && part.input)
+            total += Token.estimate(typeof part.input === "string" ? part.input : JSON.stringify(part.input))
+          else if ("output" in part) {
+            const out = part.output
+            if (typeof out === "string") total += Token.estimate(out)
+            else if (out && typeof out === "object" && "value" in out && typeof out.value === "string")
+              total += Token.estimate(out.value)
+          }
+        }
+      }
+    }
+    return total
+  }
+
+  export async function shouldCompact(input: {
+    messages: import("ai").ModelMessage[]
+    model: Provider.Model
+    system?: number
+  }) {
+    const usable = await capacity(input.model)
+    if (usable === undefined) return false
+    return estimateMessages(input.messages) + (input.system ?? 0) >= usable
   }
 
   export const PRUNE_MINIMUM = 20_000

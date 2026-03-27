@@ -95,6 +95,8 @@ export namespace SessionRevert {
     const preserve = [] as MessageV2.WithParts[]
     const remove = [] as MessageV2.WithParts[]
     let target: MessageV2.WithParts | undefined
+    const tokens = { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } }
+    let cost = 0
     for (const msg of msgs) {
       if (msg.info.id < messageID) {
         preserve.push(msg)
@@ -112,6 +114,16 @@ export namespace SessionRevert {
       remove.push(msg)
     }
     for (const msg of remove) {
+      for (const part of msg.parts) {
+        if (part.type === "step-finish") {
+          tokens.input += part.tokens.input
+          tokens.output += part.tokens.output
+          tokens.reasoning += part.tokens.reasoning
+          tokens.cache.read += part.tokens.cache.read
+          tokens.cache.write += part.tokens.cache.write
+          cost += part.cost
+        }
+      }
       SyncEvent.run(MessageV2.Event.Removed, {
         sessionID: sessionID,
         messageID: msg.info.id,
@@ -125,6 +137,14 @@ export namespace SessionRevert {
         const removeParts = target.parts.slice(removeStart)
         target.parts = preserveParts
         for (const part of removeParts) {
+          if (part.type === "step-finish") {
+            tokens.input += part.tokens.input
+            tokens.output += part.tokens.output
+            tokens.reasoning += part.tokens.reasoning
+            tokens.cache.read += part.tokens.cache.read
+            tokens.cache.write += part.tokens.cache.write
+            cost += part.cost
+          }
           SyncEvent.run(MessageV2.Event.PartRemoved, {
             sessionID: sessionID,
             messageID: target.info.id,
@@ -133,6 +153,8 @@ export namespace SessionRevert {
         }
       }
     }
+    const total = tokens.input + tokens.output + tokens.reasoning + tokens.cache.read + tokens.cache.write
+    if (total > 0) Session.subtractUsage(sessionID, tokens, cost)
     await Session.clearRevert(sessionID)
   }
 }
