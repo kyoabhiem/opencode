@@ -12,7 +12,7 @@ import {
   jsonSchema,
 } from "ai"
 import { mergeDeep, pipe } from "remeda"
-// gitlab-ai-provider is lazy-loaded in provider.ts; use duck-type check instead of instanceof
+import { GitLabWorkflowLanguageModel } from "gitlab-ai-provider"
 import { ProviderTransform } from "@/provider/transform"
 import { Config } from "@/config/config"
 import { Instance } from "@/project/instance"
@@ -113,17 +113,20 @@ export namespace LLM {
       options.instructions = system.join("\n")
     }
 
+    const isWorkflow = language instanceof GitLabWorkflowLanguageModel
     const messages = isOpenaiOauth
       ? input.messages
-      : [
-          ...system.map(
-            (x): ModelMessage => ({
-              role: "system",
-              content: x,
-            }),
-          ),
-          ...input.messages,
-        ]
+      : isWorkflow
+        ? input.messages
+        : [
+            ...system.map(
+              (x): ModelMessage => ({
+                role: "system",
+                content: x,
+              }),
+            ),
+            ...input.messages,
+          ]
 
     const params = await Plugin.trigger(
       "chat.params",
@@ -158,13 +161,10 @@ export namespace LLM {
       },
     )
 
-    const maxOutputTokens = isOpenaiOauth
-      ? undefined
-      : provider.id.includes("github-copilot") && input.model.api.npm === "@ai-sdk/anthropic"
-        ? input.model.limit.output
-        : provider.id.includes("github-copilot")
-          ? undefined
-          : ProviderTransform.maxOutputTokens(input.model)
+    const maxOutputTokens =
+      isOpenaiOauth || provider.id.includes("github-copilot")
+        ? undefined
+        : ProviderTransform.maxOutputTokens(input.model)
 
     const tools = await resolveTools(input)
 
@@ -191,14 +191,9 @@ export namespace LLM {
     // Wire up toolExecutor for DWS workflow models so that tool calls
     // from the workflow service are executed via opencode's tool system
     // and results sent back over the WebSocket.
-    if ("toolExecutor" in language) {
-      const workflowModel = language as {
-        toolExecutor: (
-          name: string,
-          args: string,
-          id: string,
-        ) => Promise<{ result: string; error?: string; metadata?: unknown; title?: string }>
-      }
+    if (language instanceof GitLabWorkflowLanguageModel) {
+      const workflowModel = language
+      workflowModel.systemPrompt = system.join("\n")
       workflowModel.toolExecutor = async (toolName, argsJson, _requestID) => {
         const t = tools[toolName]
         if (!t || !t.execute) {
@@ -299,25 +294,14 @@ export namespace LLM {
   }
 
   async function resolveTools(input: Pick<StreamInput, "tools" | "agent" | "permission" | "user">) {
-    const before = Object.keys(input.tools).length
     const disabled = Permission.disabled(
       Object.keys(input.tools),
       Permission.merge(input.agent.permission, input.permission ?? []),
     )
-    const removed: string[] = []
     for (const tool of Object.keys(input.tools)) {
       if (input.user.tools?.[tool] === false || disabled.has(tool)) {
-        removed.push(tool)
         delete input.tools[tool]
       }
-    }
-    if (removed.length > 0) {
-      log.info("tools filtered by permissions", {
-        agent: input.agent.name,
-        before,
-        after: Object.keys(input.tools).length,
-        removed: removed.join(", "),
-      })
     }
     return input.tools
   }

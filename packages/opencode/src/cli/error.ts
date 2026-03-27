@@ -1,4 +1,5 @@
 import { ConfigMarkdown } from "@/config/markdown"
+import { errorFormat } from "@/util/error"
 import { Config } from "../config/config"
 import { UI } from "./ui"
 
@@ -46,17 +47,5 @@ export async function FormatError(input: unknown) {
 }
 
 export function FormatUnknownError(input: unknown): string {
-  if (input instanceof Error) {
-    return input.stack ?? `${input.name}: ${input.message}`
-  }
-
-  if (typeof input === "object" && input !== null) {
-    try {
-      return JSON.stringify(input, null, 2)
-    } catch {
-      return "Unexpected error (unserializable)"
-    }
-  }
-
-  return String(input)
+  return errorFormat(input)
 }

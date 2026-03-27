@@ -9,19 +9,20 @@ import { Config } from "../config/config"
 import { Flag } from "../flag/flag"
 import { Installation } from "../installation"
 
-import { Database, NotFoundError, eq, and, or, gte, isNull, desc, like, inArray, lt, sql } from "../storage/db"
+import { Database, NotFoundError, eq, and, gte, isNull, desc, like, inArray, lt } from "../storage/db"
+import { SyncEvent } from "../sync"
 import type { SQL } from "../storage/db"
-import { SessionTable, MessageTable, PartTable } from "./session.sql"
+import { SessionTable } from "./session.sql"
 import { ProjectTable } from "../project/project.sql"
 import { Storage } from "@/storage/storage"
 import { Log } from "../util/log"
+import { updateSchema } from "../util/update-schema"
 import { MessageV2 } from "./message-v2"
 import { Instance } from "../project/instance"
 import { SessionPrompt } from "./prompt"
 import { fn } from "@/util/fn"
 import { Command } from "../command"
 import { Snapshot } from "@/snapshot"
-import { WorkspaceContext } from "../control-plane/workspace-context"
 import { ProjectID } from "../project/schema"
 import { WorkspaceID } from "../control-plane/schema"
 import { SessionID, MessageID, PartID } from "./schema"
@@ -63,19 +64,6 @@ export namespace Session {
         : undefined
     const share = row.share_url ? { url: row.share_url } : undefined
     const revert = row.revert ?? undefined
-    const usage =
-      row.usage_input || row.usage_output || row.usage_reasoning || row.usage_cache_read || row.usage_cache_write
-        ? {
-            input: row.usage_input ?? 0,
-            output: row.usage_output ?? 0,
-            reasoning: row.usage_reasoning ?? 0,
-            cache: {
-              read: row.usage_cache_read ?? 0,
-              write: row.usage_cache_write ?? 0,
-            },
-            cost: row.usage_cost ?? 0,
-          }
-        : undefined
     return {
       id: row.id,
       slug: row.slug,
@@ -88,7 +76,6 @@ export namespace Session {
       summary,
       share,
       revert,
-      usage,
       permission: row.permission ?? undefined,
       time: {
         created: row.time_created,
@@ -116,12 +103,6 @@ export namespace Session {
       summary_diffs: info.summary?.diffs,
       revert: info.revert ?? null,
       permission: info.permission,
-      usage_input: info.usage?.input ?? 0,
-      usage_output: info.usage?.output ?? 0,
-      usage_reasoning: info.usage?.reasoning ?? 0,
-      usage_cache_read: info.usage?.cache?.read ?? 0,
-      usage_cache_write: info.usage?.cache?.write ?? 0,
-      usage_cost: info.usage?.cost ?? 0,
       time_created: info.time.created,
       time_updated: info.time.updated,
       time_compacting: info.time.compacting,
@@ -177,18 +158,6 @@ export namespace Session {
           diff: z.string().optional(),
         })
         .optional(),
-      usage: z
-        .object({
-          input: z.number(),
-          output: z.number(),
-          reasoning: z.number(),
-          cache: z.object({
-            read: z.number(),
-            write: z.number(),
-          }),
-          cost: z.number(),
-        })
-        .optional(),
     })
     .meta({
       ref: "Session",
@@ -214,24 +183,40 @@ export namespace Session {
   export type GlobalInfo = z.output<typeof GlobalInfo>
 
   export const Event = {
-    Created: BusEvent.define(
-      "session.created",
-      z.object({
+    Created: SyncEvent.define({
+      type: "session.created",
+      version: 1,
+      aggregate: "sessionID",
+      schema: z.object({
+        sessionID: SessionID.zod,
         info: Info,
       }),
-    ),
-    Updated: BusEvent.define(
-      "session.updated",
-      z.object({
+    }),
+    Updated: SyncEvent.define({
+      type: "session.updated",
+      version: 1,
+      aggregate: "sessionID",
+      schema: z.object({
+        sessionID: SessionID.zod,
+        info: updateSchema(Info).extend({
+          share: updateSchema(Info.shape.share.unwrap()).optional(),
+          time: updateSchema(Info.shape.time).optional(),
+        }),
+      }),
+      busSchema: z.object({
+        sessionID: SessionID.zod,
         info: Info,
       }),
-    ),
-    Deleted: BusEvent.define(
-      "session.deleted",
-      z.object({
+    }),
+    Deleted: SyncEvent.define({
+      type: "session.deleted",
+      version: 1,
+      aggregate: "sessionID",
+      schema: z.object({
+        sessionID: SessionID.zod,
         info: Info,
       }),
-    ),
+    }),
     Diff: BusEvent.define(
       "session.diff",
       z.object({
@@ -284,8 +269,6 @@ export namespace Session {
       })
       const msgs = await messages({ sessionID: input.sessionID })
       const idMap = new Map<string, MessageID>()
-      const tokens = { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } }
-      let cost = 0
 
       for (const msg of msgs) {
         if (input.messageID && msg.info.id >= input.messageID) break
@@ -301,14 +284,6 @@ export namespace Session {
         })
 
         for (const part of msg.parts) {
-          if (part.type === "step-finish") {
-            tokens.input += part.tokens.input
-            tokens.output += part.tokens.output
-            tokens.reasoning += part.tokens.reasoning
-            tokens.cache.read += part.tokens.cache.read
-            tokens.cache.write += part.tokens.cache.write
-            cost += part.cost
-          }
           await updatePart({
             ...part,
             id: PartID.ascending(),
@@ -317,26 +292,13 @@ export namespace Session {
           })
         }
       }
-      if (tokens.input || tokens.output || tokens.reasoning || tokens.cache.read || tokens.cache.write) {
-        addUsage(session.id, tokens, cost)
-      }
       return session
     },
   )
 
   export const touch = fn(SessionID.zod, async (sessionID) => {
-    const now = Date.now()
-    Database.use((db) => {
-      const row = db
-        .update(SessionTable)
-        .set({ time_updated: now })
-        .where(eq(SessionTable.id, sessionID))
-        .returning()
-        .get()
-      if (!row) throw new NotFoundError({ message: `Session not found: ${sessionID}` })
-      const info = fromRow(row)
-      Database.effect(() => Bus.publish(Event.Updated, { info }))
-    })
+    const time = Date.now()
+    SyncEvent.run(Event.Updated, { sessionID, info: { time: { updated: time } } })
   })
 
   export async function createNext(input: {
@@ -363,22 +325,25 @@ export namespace Session {
       },
     }
     log.info("created", result)
-    Database.use((db) => {
-      db.insert(SessionTable).values(toRow(result)).run()
-      Database.effect(() =>
-        Bus.publish(Event.Created, {
-          info: result,
-        }),
-      )
-    })
+
+    SyncEvent.run(Event.Created, { sessionID: result.id, info: result })
+
     const cfg = await Config.get()
-    if (!result.parentID && (Flag.OPENCODE_AUTO_SHARE || cfg.share === "auto"))
+    if (!result.parentID && (Flag.OPENCODE_AUTO_SHARE || cfg.share === "auto")) {
       share(result.id).catch(() => {
         // Silently ignore sharing errors during session creation
       })
-    Bus.publish(Event.Updated, {
-      info: result,
-    })
+    }
+
+    if (!Flag.OPENCODE_EXPERIMENTAL_WORKSPACES) {
+      // This only exist for backwards compatibility. We should not be
+      // manually publishing this event; it is a sync event now
+      Bus.publish(Event.Updated, {
+        sessionID: result.id,
+        info: result,
+      })
+    }
+
     return result
   }
 
@@ -402,12 +367,9 @@ export namespace Session {
     }
     const { ShareNext } = await import("@/share/share-next")
     const share = await ShareNext.create(id)
-    Database.use((db) => {
-      const row = db.update(SessionTable).set({ share_url: share.url }).where(eq(SessionTable.id, id)).returning().get()
-      if (!row) throw new NotFoundError({ message: `Session not found: ${id}` })
-      const info = fromRow(row)
-      Database.effect(() => Bus.publish(Event.Updated, { info }))
-    })
+
+    SyncEvent.run(Event.Updated, { sessionID: id, info: { share: { url: share.url } } })
+
     return share
   })
 
@@ -415,12 +377,8 @@ export namespace Session {
     // Use ShareNext to remove the share (same as share function uses ShareNext to create)
     const { ShareNext } = await import("@/share/share-next")
     await ShareNext.remove(id)
-    Database.use((db) => {
-      const row = db.update(SessionTable).set({ share_url: null }).where(eq(SessionTable.id, id)).returning().get()
-      if (!row) throw new NotFoundError({ message: `Session not found: ${id}` })
-      const info = fromRow(row)
-      Database.effect(() => Bus.publish(Event.Updated, { info }))
-    })
+
+    SyncEvent.run(Event.Updated, { sessionID: id, info: { share: { url: null } } })
   })
 
   export const setTitle = fn(
@@ -429,18 +387,7 @@ export namespace Session {
       title: z.string(),
     }),
     async (input) => {
-      return Database.use((db) => {
-        const row = db
-          .update(SessionTable)
-          .set({ title: input.title })
-          .where(eq(SessionTable.id, input.sessionID))
-          .returning()
-          .get()
-        if (!row) throw new NotFoundError({ message: `Session not found: ${input.sessionID}` })
-        const info = fromRow(row)
-        Database.effect(() => Bus.publish(Event.Updated, { info }))
-        return info
-      })
+      SyncEvent.run(Event.Updated, { sessionID: input.sessionID, info: { title: input.title } })
     },
   )
 
@@ -450,18 +397,7 @@ export namespace Session {
       time: z.number().optional(),
     }),
     async (input) => {
-      return Database.use((db) => {
-        const row = db
-          .update(SessionTable)
-          .set({ time_archived: input.time })
-          .where(eq(SessionTable.id, input.sessionID))
-          .returning()
-          .get()
-        if (!row) throw new NotFoundError({ message: `Session not found: ${input.sessionID}` })
-        const info = fromRow(row)
-        Database.effect(() => Bus.publish(Event.Updated, { info }))
-        return info
-      })
+      SyncEvent.run(Event.Updated, { sessionID: input.sessionID, info: { time: { archived: input.time } } })
     },
   )
 
@@ -471,17 +407,9 @@ export namespace Session {
       permission: Permission.Ruleset,
     }),
     async (input) => {
-      return Database.use((db) => {
-        const row = db
-          .update(SessionTable)
-          .set({ permission: input.permission, time_updated: Date.now() })
-          .where(eq(SessionTable.id, input.sessionID))
-          .returning()
-          .get()
-        if (!row) throw new NotFoundError({ message: `Session not found: ${input.sessionID}` })
-        const info = fromRow(row)
-        Database.effect(() => Bus.publish(Event.Updated, { info }))
-        return info
+      SyncEvent.run(Event.Updated, {
+        sessionID: input.sessionID,
+        info: { permission: input.permission, time: { updated: Date.now() } },
       })
     },
   )
@@ -493,42 +421,24 @@ export namespace Session {
       summary: Info.shape.summary,
     }),
     async (input) => {
-      return Database.use((db) => {
-        const row = db
-          .update(SessionTable)
-          .set({
-            revert: input.revert ?? null,
-            summary_additions: input.summary?.additions,
-            summary_deletions: input.summary?.deletions,
-            summary_files: input.summary?.files,
-            time_updated: Date.now(),
-          })
-          .where(eq(SessionTable.id, input.sessionID))
-          .returning()
-          .get()
-        if (!row) throw new NotFoundError({ message: `Session not found: ${input.sessionID}` })
-        const info = fromRow(row)
-        Database.effect(() => Bus.publish(Event.Updated, { info }))
-        return info
+      SyncEvent.run(Event.Updated, {
+        sessionID: input.sessionID,
+        info: {
+          summary: input.summary,
+          time: { updated: Date.now() },
+          revert: input.revert,
+        },
       })
     },
   )
 
   export const clearRevert = fn(SessionID.zod, async (sessionID) => {
-    return Database.use((db) => {
-      const row = db
-        .update(SessionTable)
-        .set({
-          revert: null,
-          time_updated: Date.now(),
-        })
-        .where(eq(SessionTable.id, sessionID))
-        .returning()
-        .get()
-      if (!row) throw new NotFoundError({ message: `Session not found: ${sessionID}` })
-      const info = fromRow(row)
-      Database.effect(() => Bus.publish(Event.Updated, { info }))
-      return info
+    SyncEvent.run(Event.Updated, {
+      sessionID,
+      info: {
+        time: { updated: Date.now() },
+        revert: null,
+      },
     })
   })
 
@@ -538,22 +448,12 @@ export namespace Session {
       summary: Info.shape.summary,
     }),
     async (input) => {
-      return Database.use((db) => {
-        const row = db
-          .update(SessionTable)
-          .set({
-            summary_additions: input.summary?.additions,
-            summary_deletions: input.summary?.deletions,
-            summary_files: input.summary?.files,
-            time_updated: Date.now(),
-          })
-          .where(eq(SessionTable.id, input.sessionID))
-          .returning()
-          .get()
-        if (!row) throw new NotFoundError({ message: `Session not found: ${input.sessionID}` })
-        const info = fromRow(row)
-        Database.effect(() => Bus.publish(Event.Updated, { info }))
-        return info
+      SyncEvent.run(Event.Updated, {
+        sessionID: input.sessionID,
+        info: {
+          time: { updated: Date.now() },
+          summary: input.summary,
+        },
       })
     },
   )
@@ -593,8 +493,8 @@ export namespace Session {
     const project = Instance.project
     const conditions = [eq(SessionTable.project_id, project.id)]
 
-    if (WorkspaceContext.workspaceID) {
-      conditions.push(eq(SessionTable.workspace_id, WorkspaceContext.workspaceID))
+    if (input?.workspaceID) {
+      conditions.push(eq(SessionTable.workspace_id, input.workspaceID))
     }
     if (input?.directory) {
       conditions.push(eq(SessionTable.directory, input.directory))
@@ -707,46 +607,28 @@ export namespace Session {
   })
 
   export const remove = fn(SessionID.zod, async (sessionID) => {
-    const project = Instance.project
     try {
       const session = await get(sessionID)
       for (const child of await children(sessionID)) {
         await remove(child.id)
       }
       await unshare(sessionID).catch(() => {})
-      // CASCADE delete handles messages and parts automatically
-      Database.use((db) => {
-        db.delete(SessionTable).where(eq(SessionTable.id, sessionID)).run()
-        Database.effect(() =>
-          Bus.publish(Event.Deleted, {
-            info: session,
-          }),
-        )
-      })
+
+      SyncEvent.run(Event.Deleted, { sessionID, info: session })
+
+      // Eagerly remove event sourcing data to free up space
+      SyncEvent.remove(sessionID)
     } catch (e) {
       log.error(e)
     }
   })
 
   export const updateMessage = fn(MessageV2.Info, async (msg) => {
-    const time_created = msg.time.created
-    const { id, sessionID, ...data } = msg
-    Database.use((db) => {
-      db.insert(MessageTable)
-        .values({
-          id,
-          session_id: sessionID,
-          time_created,
-          data,
-        })
-        .onConflictDoUpdate({ target: MessageTable.id, set: { data } })
-        .run()
-      Database.effect(() =>
-        Bus.publish(MessageV2.Event.Updated, {
-          info: msg,
-        }),
-      )
+    SyncEvent.run(MessageV2.Event.Updated, {
+      sessionID: msg.sessionID,
+      info: msg,
     })
+
     return msg
   })
 
@@ -756,34 +638,10 @@ export namespace Session {
       messageID: MessageID.zod,
     }),
     async (input) => {
-      const parts = await MessageV2.parts(input.messageID)
-      const tokens = { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } }
-      let cost = 0
-      for (const part of parts) {
-        if (part.type === "step-finish") {
-          tokens.input += part.tokens.input
-          tokens.output += part.tokens.output
-          tokens.reasoning += part.tokens.reasoning
-          tokens.cache.read += part.tokens.cache.read
-          tokens.cache.write += part.tokens.cache.write
-          cost += part.cost
-        }
-      }
-      // CASCADE delete handles parts automatically
-      Database.use((db) => {
-        db.delete(MessageTable)
-          .where(and(eq(MessageTable.id, input.messageID), eq(MessageTable.session_id, input.sessionID)))
-          .run()
-        Database.effect(() =>
-          Bus.publish(MessageV2.Event.Removed, {
-            sessionID: input.sessionID,
-            messageID: input.messageID,
-          }),
-        )
+      SyncEvent.run(MessageV2.Event.Removed, {
+        sessionID: input.sessionID,
+        messageID: input.messageID,
       })
-      if (tokens.input || tokens.output || tokens.reasoning || tokens.cache.read || tokens.cache.write) {
-        subtractUsage(input.sessionID, tokens, cost)
-      }
       return input.messageID
     },
   )
@@ -795,80 +653,22 @@ export namespace Session {
       partID: PartID.zod,
     }),
     async (input) => {
-      Database.use((db) => {
-        db.delete(PartTable)
-          .where(and(eq(PartTable.id, input.partID), eq(PartTable.session_id, input.sessionID)))
-          .run()
-        Database.effect(() =>
-          Bus.publish(MessageV2.Event.PartRemoved, {
-            sessionID: input.sessionID,
-            messageID: input.messageID,
-            partID: input.partID,
-          }),
-        )
+      SyncEvent.run(MessageV2.Event.PartRemoved, {
+        sessionID: input.sessionID,
+        messageID: input.messageID,
+        partID: input.partID,
       })
       return input.partID
     },
   )
 
-  type UsageTokens = {
-    input: number
-    output: number
-    reasoning: number
-    cache: { read: number; write: number }
-  }
-
-  function mutateUsage(sessionID: SessionID, tokens: UsageTokens, cost: number, sign: 1 | -1) {
-    Database.use((db) => {
-      const row = db
-        .update(SessionTable)
-        .set({
-          usage_input: sql`coalesce(${SessionTable.usage_input}, 0) + ${tokens.input * sign}`,
-          usage_output: sql`coalesce(${SessionTable.usage_output}, 0) + ${tokens.output * sign}`,
-          usage_reasoning: sql`coalesce(${SessionTable.usage_reasoning}, 0) + ${tokens.reasoning * sign}`,
-          usage_cache_read: sql`coalesce(${SessionTable.usage_cache_read}, 0) + ${tokens.cache.read * sign}`,
-          usage_cache_write: sql`coalesce(${SessionTable.usage_cache_write}, 0) + ${tokens.cache.write * sign}`,
-          usage_cost: sql`coalesce(${SessionTable.usage_cost}, 0) + ${cost * sign}`,
-          time_updated: Date.now(),
-        })
-        .where(eq(SessionTable.id, sessionID))
-        .returning()
-        .get()
-      if (!row) return
-      const info = fromRow(row)
-      Database.effect(() => Bus.publish(Event.Updated, { info }))
-    })
-  }
-
-  export function addUsage(sessionID: SessionID, tokens: UsageTokens, cost: number) {
-    mutateUsage(sessionID, tokens, cost, 1)
-  }
-
-  export function subtractUsage(sessionID: SessionID, tokens: UsageTokens, cost: number) {
-    mutateUsage(sessionID, tokens, cost, -1)
-  }
-
   const UpdatePartInput = MessageV2.Part
 
   export const updatePart = fn(UpdatePartInput, async (part) => {
-    const { id, messageID, sessionID, ...data } = part
-    const time = Date.now()
-    Database.use((db) => {
-      db.insert(PartTable)
-        .values({
-          id,
-          message_id: messageID,
-          session_id: sessionID,
-          time_created: time,
-          data,
-        })
-        .onConflictDoUpdate({ target: PartTable.id, set: { data } })
-        .run()
-      Database.effect(() =>
-        Bus.publish(MessageV2.Event.PartUpdated, {
-          part: structuredClone(part),
-        }),
-      )
+    SyncEvent.run(MessageV2.Event.PartUpdated, {
+      sessionID: part.sessionID,
+      part: structuredClone(part),
+      time: Date.now(),
     })
     return part
   })
@@ -917,7 +717,7 @@ export namespace Session {
       // It looks like OpenCode's cost calculation assumes all providers return inputTokens the same way Anthropic does (I'm guessing getUsage logic was originally implemented with anthropic), so it's causing incorrect cost calculation for OpenRouter and others.
       const excludesCachedTokens = !!(input.metadata?.["anthropic"] || input.metadata?.["bedrock"])
       const adjustedInputTokens = safe(
-        excludesCachedTokens ? inputTokens : Math.max(0, inputTokens - cacheReadInputTokens - cacheWriteInputTokens),
+        excludesCachedTokens ? inputTokens : inputTokens - cacheReadInputTokens - cacheWriteInputTokens,
       )
 
       const total = iife(() => {

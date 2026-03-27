@@ -4,8 +4,7 @@ import { Snapshot } from "../snapshot"
 import { MessageV2 } from "./message-v2"
 import { Session } from "."
 import { Log } from "../util/log"
-import { Database, eq } from "../storage/db"
-import { MessageTable, PartTable } from "./session.sql"
+import { SyncEvent } from "../sync"
 import { Storage } from "@/storage/storage"
 import { Bus } from "../bus"
 import { SessionPrompt } from "./prompt"
@@ -112,23 +111,11 @@ export namespace SessionRevert {
       }
       remove.push(msg)
     }
-    const tokens = { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } }
-    let cost = 0
     for (const msg of remove) {
-      for (const part of msg.parts) {
-        if (part.type === "step-finish") {
-          tokens.input += part.tokens.input
-          tokens.output += part.tokens.output
-          tokens.reasoning += part.tokens.reasoning
-          tokens.cache.read += part.tokens.cache.read
-          tokens.cache.write += part.tokens.cache.write
-          cost += part.cost
-        }
-      }
-    }
-    for (const msg of remove) {
-      Database.use((db) => db.delete(MessageTable).where(eq(MessageTable.id, msg.info.id)).run())
-      await Bus.publish(MessageV2.Event.Removed, { sessionID: sessionID, messageID: msg.info.id })
+      SyncEvent.run(MessageV2.Event.Removed, {
+        sessionID: sessionID,
+        messageID: msg.info.id,
+      })
     }
     if (session.revert.partID && target) {
       const partID = session.revert.partID
@@ -138,25 +125,13 @@ export namespace SessionRevert {
         const removeParts = target.parts.slice(removeStart)
         target.parts = preserveParts
         for (const part of removeParts) {
-          if (part.type === "step-finish") {
-            tokens.input += part.tokens.input
-            tokens.output += part.tokens.output
-            tokens.reasoning += part.tokens.reasoning
-            tokens.cache.read += part.tokens.cache.read
-            tokens.cache.write += part.tokens.cache.write
-            cost += part.cost
-          }
-          Database.use((db) => db.delete(PartTable).where(eq(PartTable.id, part.id)).run())
-          await Bus.publish(MessageV2.Event.PartRemoved, {
+          SyncEvent.run(MessageV2.Event.PartRemoved, {
             sessionID: sessionID,
-            messageID: target!.info.id,
+            messageID: target.info.id,
             partID: part.id,
           })
         }
       }
-    }
-    if (tokens.input || tokens.output || tokens.reasoning || tokens.cache.read || tokens.cache.write) {
-      Session.subtractUsage(sessionID, tokens, cost)
     }
     await Session.clearRevert(sessionID)
   }
