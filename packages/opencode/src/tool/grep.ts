@@ -79,7 +79,7 @@ export const GrepTool = Tool.define("grep", {
 
     // Handle both Unix (\n) and Windows (\r\n) line endings
     const lines = output.trim().split(/\r?\n/)
-    const matches = []
+    const parsed = []
 
     for (const line of lines) {
       if (!line) continue
@@ -87,25 +87,33 @@ export const GrepTool = Tool.define("grep", {
       const [filePath, lineNumStr, ...lineTextParts] = line.split("|")
       if (!filePath || !lineNumStr || lineTextParts.length === 0) continue
 
-      const lineNum = parseInt(lineNumStr, 10)
-      const lineText = lineTextParts.join("|")
-
-      const stats = Filesystem.stat(filePath)
-      if (!stats) continue
-
-      matches.push({
+      parsed.push({
         path: filePath,
-        modTime: stats.mtime.getTime(),
-        lineNum,
-        lineText,
+        lineNum: parseInt(lineNumStr, 10),
+        lineText: lineTextParts.join("|"),
       })
     }
 
-    matches.sort((a, b) => b.modTime - a.modTime)
-
+    // Truncate before stat — only stat files we'll actually return
     const limit = 100
-    const truncated = matches.length > limit
-    const finalMatches = truncated ? matches.slice(0, limit) : matches
+    const truncated = parsed.length > limit
+    const kept = truncated ? parsed.slice(0, limit) : parsed
+
+    // Dedup stat calls per unique file path
+    const mtimes = new Map<string, number>()
+    const matches = kept
+      .filter((m) => {
+        if (!mtimes.has(m.path)) {
+          const stats = Filesystem.stat(m.path)
+          if (!stats) return false
+          mtimes.set(m.path, stats.mtime.getTime())
+        }
+        return true
+      })
+      .map((m) => ({ ...m, modTime: mtimes.get(m.path)! }))
+
+    matches.sort((a, b) => b.modTime - a.modTime)
+    const finalMatches = matches
 
     if (finalMatches.length === 0) {
       return {
@@ -115,7 +123,7 @@ export const GrepTool = Tool.define("grep", {
       }
     }
 
-    const totalMatches = matches.length
+    const totalMatches = parsed.length
     const outputLines = [`Found ${totalMatches} matches${truncated ? ` (showing first ${limit})` : ""}`]
 
     let currentFile = ""

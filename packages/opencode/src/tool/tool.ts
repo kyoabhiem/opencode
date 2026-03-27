@@ -4,8 +4,11 @@ import type { Agent } from "../agent/agent"
 import type { Permission } from "../permission"
 import type { SessionID, MessageID } from "../session/schema"
 import { Truncate } from "./truncate"
+import { Token } from "../util/token"
+import { Log } from "../util/log"
 
 export namespace Tool {
+  const log = Log.create({ service: "tool" })
   interface Metadata {
     [key: string]: any
   }
@@ -56,6 +59,7 @@ export namespace Tool {
         const toolInfo = init instanceof Function ? await init(initCtx) : init
         const execute = toolInfo.execute
         toolInfo.execute = async (args, ctx) => {
+          using _ = log.time(`execute:${id}`)
           try {
             toolInfo.parameters.parse(args)
           } catch (error) {
@@ -72,7 +76,12 @@ export namespace Tool {
           if (result.metadata.truncated !== undefined) {
             return result
           }
-          const truncated = await Truncate.output(result.output, {}, initCtx?.agent)
+          const model = ctx.extra?.model
+          const truncated = await Truncate.output(
+            result.output,
+            { budget: Token.budget(model?.limit?.context) },
+            initCtx?.agent,
+          )
           return {
             ...result,
             output: truncated.content,
