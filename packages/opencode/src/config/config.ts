@@ -702,7 +702,6 @@ export namespace Config {
       messages_next: z.string().optional().default("none").describe("Navigate to next message"),
       messages_previous: z.string().optional().default("none").describe("Navigate to previous message"),
       messages_last_user: z.string().optional().default("none").describe("Navigate to last user message"),
-      messages_load_older: z.string().optional().default("<leader>o").describe("Load older messages"),
       messages_copy: z.string().optional().default("<leader>y").describe("Copy message"),
       messages_undo: z.string().optional().default("<leader>u").describe("Undo message"),
       messages_redo: z.string().optional().default("<leader>r").describe("Redo message"),

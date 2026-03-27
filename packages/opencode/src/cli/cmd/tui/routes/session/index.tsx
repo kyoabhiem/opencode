@@ -318,19 +318,6 @@ export function Session() {
     }, 50)
   }
 
-  async function older() {
-    if (!scroll) return
-    const before = scroll.scrollHeight
-    const loaded = await sync.session.older(route.sessionID)
-    if (!loaded) return
-    // preserve scroll position after prepending
-    setTimeout(() => {
-      if (!scroll || scroll.isDestroyed) return
-      const delta = scroll.scrollHeight - before
-      if (delta > 0) scroll.scrollBy(delta)
-    }, 50)
-  }
-
   const local = useLocal()
 
   function moveFirstChild() {
@@ -744,17 +731,6 @@ export function Session() {
       },
     },
     {
-      title: "Load older messages",
-      value: "session.load_older",
-      keybind: "messages_load_older",
-      category: "Session",
-      enabled: !!sync.data.pagination[route.sessionID]?.more,
-      onSelect: async (dialog) => {
-        dialog.clear()
-        await older()
-      },
-    },
-    {
       title: "Last message",
       value: "session.last",
       keybind: "messages_last",
@@ -1079,7 +1055,6 @@ export function Session() {
               viewportOptions={{
                 paddingRight: showScrollbar() ? 1 : 0,
               }}
-              viewportCulling={true}
               verticalScrollbarOptions={{
                 paddingLeft: 1,
                 visible: showScrollbar(),
@@ -1093,32 +1068,6 @@ export function Session() {
               flexGrow={1}
               scrollAcceleration={scrollAcceleration()}
             >
-              <Show when={sync.data.pagination[route.sessionID]}>
-                {(pg) => (
-                  <Show
-                    when={pg().more}
-                    fallback={
-                      <Show when={messages().length > 0}>
-                        <box paddingLeft={2} paddingBottom={1}>
-                          <text fg={theme.textMuted}>── Beginning of conversation ──</text>
-                        </box>
-                      </Show>
-                    }
-                  >
-                    <box paddingLeft={2} paddingBottom={1} onMouseUp={() => older()}>
-                      <Show
-                        when={!pg().loading}
-                        fallback={<text fg={theme.textMuted}>── Loading older messages… ──</text>}
-                      >
-                        <text fg={theme.textMuted}>
-                          ── <span style={{ fg: theme.text }}>{keybind.print("messages_load_older")}</span> load older
-                          messages ──
-                        </text>
-                      </Show>
-                    </box>
-                  </Show>
-                )}
-              </Show>
               <For each={messages()}>
                 {(message, index) => (
                   <Switch>
@@ -1696,9 +1645,6 @@ function InlineTool(props: {
   onClick?: () => void
 }) {
   const [margin, setMargin] = createSignal(0)
-  let lastElHeight = -1
-  let lastPrevHeight = -1
-  let lastPrevId = ""
   const { theme } = useTheme()
   const ctx = use()
   const sync = useSync()
@@ -1741,29 +1687,20 @@ function InlineTool(props: {
       renderBefore={function () {
         const el = this as BoxRenderable
         const parent = el.parent
-        if (!parent) return
+        if (!parent) {
+          return
+        }
         if (el.height > 1) {
-          if (lastElHeight !== el.height) {
-            lastElHeight = el.height
-            setMargin(1)
-          }
+          setMargin(1)
           return
         }
         const children = parent.getChildren()
         const index = children.indexOf(el)
         const previous = children[index - 1]
         if (!previous) {
-          if (lastElHeight !== el.height) {
-            lastElHeight = el.height
-            setMargin(0)
-          }
+          setMargin(0)
           return
         }
-        // Skip DOM walk if heights and sibling identity unchanged
-        if (el.height === lastElHeight && previous.height === lastPrevHeight && previous.id === lastPrevId) return
-        lastElHeight = el.height
-        lastPrevHeight = previous.height
-        lastPrevId = previous.id
         if (previous.height > 1 || previous.id.startsWith("text-")) {
           setMargin(1)
           return

@@ -1,19 +1,11 @@
 export class AsyncQueue<T> implements AsyncIterable<T> {
   private queue: T[] = []
   private resolvers: ((value: T) => void)[] = []
-  private capacity: number
-
-  constructor(capacity?: number) {
-    this.capacity = capacity ?? Infinity
-  }
 
   push(item: T) {
     const resolve = this.resolvers.shift()
     if (resolve) resolve(item)
-    else {
-      if (this.queue.length >= this.capacity) this.queue.shift()
-      this.queue.push(item)
-    }
+    else this.queue.push(item)
   }
 
   async next(): Promise<T> {

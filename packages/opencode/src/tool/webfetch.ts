@@ -8,15 +8,6 @@ const MAX_RESPONSE_SIZE = 5 * 1024 * 1024 // 5MB
 const DEFAULT_TIMEOUT = 30 * 1000 // 30 seconds
 const MAX_TIMEOUT = 120 * 1000 // 2 minutes
 
-const turndown = new TurndownService({
-  headingStyle: "atx",
-  hr: "---",
-  bulletListMarker: "-",
-  codeBlockStyle: "fenced",
-  emDelimiter: "*",
-})
-turndown.remove(["script", "style", "meta", "link"])
-
 export const WebFetchTool = Tool.define("webfetch", {
   description: DESCRIPTION,
   parameters: z.object({
@@ -203,5 +194,13 @@ async function extractTextFromHTML(html: string) {
 }
 
 function convertHTMLToMarkdown(html: string): string {
-  return turndown.turndown(html)
+  const turndownService = new TurndownService({
+    headingStyle: "atx",
+    hr: "---",
+    bulletListMarker: "-",
+    codeBlockStyle: "fenced",
+    emDelimiter: "*",
+  })
+  turndownService.remove(["script", "style", "meta", "link"])
+  return turndownService.turndown(html)
 }

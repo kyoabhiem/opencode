@@ -41,47 +41,20 @@ export async function CopilotAuthPlugin(input: PluginInput): Promise<Hooks> {
               },
             }
 
-            const base = baseURL ?? model.api.url
-            const claude = model.id.includes("claude")
-            const url = iife(() => {
-              if (!claude) return base
-              if (base.endsWith("/v1")) return base
-              if (base.endsWith("/")) return `${base}v1`
-              return `${base}/v1`
-            })
+            // TODO: re-enable once messages api has higher rate limits
+            // TODO: move some of this hacky-ness to models.dev presets once we have better grasp of things here...
+            // const base = baseURL ?? model.api.url
+            // const claude = model.id.includes("claude")
+            // const url = iife(() => {
+            //   if (!claude) return base
+            //   if (base.endsWith("/v1")) return base
+            //   if (base.endsWith("/")) return `${base}v1`
+            //   return `${base}/v1`
+            // })
 
-            model.api.url = url
-            model.api.npm = claude ? "@ai-sdk/anthropic" : "@ai-sdk/github-copilot"
-            // Messages API supports full 200k context for Claude models.
-            // Drop snapshot's input limit — it reflects the Completions API,
-            // not the Messages API routed via /v1.
-            if (claude) model.limit = { context: 200_000, output: model.limit.output }
-          }
-
-          // Claude Sonnet 4.6 with 1M context window via /v1/messages
-          const sonnet = provider.models["claude-sonnet-4.6"]
-          if (sonnet) {
-            provider.models["claude-sonnet-4.6-1m"] = {
-              ...sonnet,
-              id: "claude-sonnet-4.6-1m",
-              name: "Claude Sonnet 4.6 1M",
-              api: { ...sonnet.api, id: "claude-sonnet-4.6" },
-              cost: { ...sonnet.cost, cache: { ...sonnet.cost.cache } },
-              limit: { context: 1_000_000, output: 64_000 },
-            }
-          }
-
-          // Claude Opus 4.6 with 1M context window via /v1/messages
-          const opus = provider.models["claude-opus-4.6"]
-          if (opus) {
-            provider.models["claude-opus-4.6-1m"] = {
-              ...opus,
-              id: "claude-opus-4.6-1m",
-              name: "Claude Opus 4.6 1M",
-              api: { ...opus.api, id: "claude-opus-4.6" },
-              cost: { ...opus.cost, cache: { ...opus.cost.cache } },
-              limit: { context: 1_000_000, output: 128_000 },
-            }
+            // model.api.url = url
+            // model.api.npm = claude ? "@ai-sdk/anthropic" : "@ai-sdk/github-copilot"
+            model.api.npm = "@ai-sdk/github-copilot"
           }
         }
 
@@ -330,8 +303,7 @@ export async function CopilotAuthPlugin(input: PluginInput): Promise<Hooks> {
       if (!incoming.model.providerID.includes("github-copilot")) return
 
       if (incoming.model.api.npm === "@ai-sdk/anthropic") {
-        output.headers["anthropic-beta"] =
-          "claude-code-20250219,interleaved-thinking-2025-05-14,fine-grained-tool-streaming-2025-05-14"
+        output.headers["anthropic-beta"] = "interleaved-thinking-2025-05-14"
       }
 
       const parts = await sdk.session

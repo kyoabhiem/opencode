@@ -39,7 +39,7 @@ export const { use: useExit, provider: ExitProvider } = createSimpleContext({
           renderer.destroy()
           win32FlushInputBuffer()
           if (reason) {
-            const formatted = (await FormatError(reason)) ?? FormatUnknownError(reason)
+            const formatted = FormatError(reason) ?? FormatUnknownError(reason)
             if (formatted) {
               process.stderr.write(formatted + "\n")
             }

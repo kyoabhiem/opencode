@@ -1,4 +1,4 @@
-import { BoxRenderable, TextareaRenderable, MouseEvent, PasteEvent, t, dim, fg } from "@opentui/core"
+import { BoxRenderable, TextareaRenderable, MouseEvent, PasteEvent, decodePasteBytes, t, dim, fg } from "@opentui/core"
 import { createEffect, createMemo, type JSX, onMount, createSignal, onCleanup, on, Show, Switch, Match } from "solid-js"
 import "opentui-spinner/solid"
 import path from "path"
@@ -563,8 +563,10 @@ export function Prompt(props: PromptProps) {
       })
 
       if (res.error) {
+        console.log("Creating a session failed:", res.error)
+
         toast.show({
-          message: "Creating a session failed.",
+          message: "Creating a session failed. Open console for more details.",
           variant: "error",
         })
 
@@ -945,7 +947,7 @@ export function Prompt(props: PromptProps) {
                 // Normalize line endings at the boundary
                 // Windows ConPTY/Terminal often sends CR-only newlines in bracketed paste
                 // Replace CRLF first, then any remaining CR
-                const normalizedText = new TextDecoder().decode(event.bytes).replace(/\r\n/g, "\n").replace(/\r/g, "\n")
+                const normalizedText = decodePasteBytes(event.bytes).replace(/\r\n/g, "\n").replace(/\r/g, "\n")
                 const pastedContent = normalizedText.trim()
 
                 // Windows Terminal <1.25 can surface image-only clipboard as an
@@ -1032,9 +1034,6 @@ export function Prompt(props: PromptProps) {
                 <box flexDirection="row" gap={1}>
                   <text flexShrink={0} fg={keybind.leader ? theme.textMuted : theme.text}>
                     {local.model.parsed().model}
-                    <Show when={local.model.parsed().context}>
-                      <span style={{ fg: theme.textMuted }}> ({local.model.parsed().context})</span>
-                    </Show>
                   </text>
                   <text fg={theme.textMuted}>{local.model.parsed().provider}</text>
                   <Show when={showVariant()}>

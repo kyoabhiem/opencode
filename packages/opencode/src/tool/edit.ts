@@ -114,14 +114,10 @@ export const EditTool = Tool.define("edit", {
         file: filePath,
         event: "change",
       })
-      const actual = await Filesystem.readText(filePath)
-      // Only recompute diff if a formatter/hook changed the file after write
-      if (actual !== contentNew) {
-        contentNew = actual
-        diff = trimDiff(
-          createTwoFilesPatch(filePath, filePath, normalizeLineEndings(contentOld), normalizeLineEndings(contentNew)),
-        )
-      }
+      contentNew = await Filesystem.readText(filePath)
+      diff = trimDiff(
+        createTwoFilesPatch(filePath, filePath, normalizeLineEndings(contentOld), normalizeLineEndings(contentNew)),
+      )
       await FileTime.read(ctx.sessionID, filePath)
     })
 

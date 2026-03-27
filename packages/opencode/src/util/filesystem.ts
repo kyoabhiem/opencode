@@ -8,12 +8,12 @@ import { pipeline } from "stream/promises"
 import { Glob } from "./glob"
 
 export namespace Filesystem {
-  // Sync — existsSync is the underlying call, async wrapper was unnecessary
-  export function exists(p: string): boolean {
+  // Fast sync version for metadata checks
+  export async function exists(p: string): Promise<boolean> {
     return existsSync(p)
   }
 
-  export function isDir(p: string): boolean {
+  export async function isDir(p: string): Promise<boolean> {
     try {
       return statSync(p).isDirectory()
     } catch {

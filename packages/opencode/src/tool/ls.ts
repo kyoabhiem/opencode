@@ -61,22 +61,18 @@ export const ListTool = Tool.define("list", {
       if (files.length >= LIMIT) break
     }
 
-    // Build directory structure with pre-built parent→children map (O(n) vs O(n²))
+    // Build directory structure
+    const dirs = new Set<string>()
     const filesByDir = new Map<string, string[]>()
-    const childrenOf = new Map<string, string[]>()
 
     for (const file of files) {
       const dir = path.dirname(file)
       const parts = dir === "." ? [] : dir.split("/")
 
-      // Register all parent directories and build parent→children map
+      // Add all parent directories
       for (let i = 0; i <= parts.length; i++) {
         const dirPath = i === 0 ? "." : parts.slice(0, i).join("/")
-        const parent = i <= 1 ? "." : parts.slice(0, i - 1).join("/")
-        if (dirPath !== "." && !childrenOf.get(parent)?.includes(dirPath)) {
-          if (!childrenOf.has(parent)) childrenOf.set(parent, [])
-          childrenOf.get(parent)!.push(dirPath)
-        }
+        dirs.add(dirPath)
       }
 
       // Add file to its directory
@@ -93,7 +89,9 @@ export const ListTool = Tool.define("list", {
       }
 
       const childIndent = "  ".repeat(depth + 1)
-      const children = (childrenOf.get(dirPath) ?? []).sort()
+      const children = Array.from(dirs)
+        .filter((d) => path.dirname(d) === dirPath && d !== dirPath)
+        .sort()
 
       // Render subdirectories first
       for (const child of children) {

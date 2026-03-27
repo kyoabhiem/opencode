@@ -17,8 +17,6 @@ const MAX_LINE_LENGTH = 2000
 const MAX_LINE_SUFFIX = `... (line truncated to ${MAX_LINE_LENGTH} chars)`
 const MAX_BYTES = 50 * 1024
 const MAX_BYTES_LABEL = `${MAX_BYTES / 1024} KB`
-// Files at or below this size use Bun.file() fast path; larger files stream via readline
-const FAST_READ_LIMIT = 1024 * 1024
 
 export const ReadTool = Tool.define("read", {
   description: DESCRIPTION,
@@ -146,21 +144,50 @@ export const ReadTool = Tool.define("read", {
     const isBinary = await isBinaryFile(filepath, Number(stat.size))
     if (isBinary) throw new Error(`Cannot read binary file: ${filepath}`)
 
+    const stream = createReadStream(filepath, { encoding: "utf8" })
+    const rl = createInterface({
+      input: stream,
+      // Note: we use the crlfDelay option to recognize all instances of CR LF
+      // ('\r\n') in file as a single line break.
+      crlfDelay: Infinity,
+    })
+
     const limit = params.limit ?? DEFAULT_READ_LIMIT
     const offset = params.offset ?? 1
     const start = offset - 1
+    const raw: string[] = []
+    let bytes = 0
+    let lines = 0
+    let truncatedByBytes = false
+    let hasMoreLines = false
+    try {
+      for await (const text of rl) {
+        lines += 1
+        if (lines <= start) continue
 
-    const {
-      raw,
-      lines: totalLines,
-      truncatedByBytes,
-      hasMoreLines,
-    } = Number(stat.size) <= FAST_READ_LIMIT
-      ? await readFast(filepath, start, limit)
-      : await readStream(filepath, start, limit)
+        if (raw.length >= limit) {
+          hasMoreLines = true
+          continue
+        }
 
-    if (totalLines < offset && !(totalLines === 0 && offset === 1)) {
-      throw new Error(`Offset ${offset} is out of range for this file (${totalLines} lines)`)
+        const line = text.length > MAX_LINE_LENGTH ? text.substring(0, MAX_LINE_LENGTH) + MAX_LINE_SUFFIX : text
+        const size = Buffer.byteLength(line, "utf-8") + (raw.length > 0 ? 1 : 0)
+        if (bytes + size > MAX_BYTES) {
+          truncatedByBytes = true
+          hasMoreLines = true
+          break
+        }
+
+        raw.push(line)
+        bytes += size
+      }
+    } finally {
+      rl.close()
+      stream.destroy()
+    }
+
+    if (lines < offset && !(lines === 0 && offset === 1)) {
+      throw new Error(`Offset ${offset} is out of range for this file (${lines} lines)`)
     }
 
     const content = raw.map((line, index) => {
@@ -171,6 +198,7 @@ export const ReadTool = Tool.define("read", {
     let output = [`<path>${filepath}</path>`, `<type>file</type>`, "<content>"].join("\n")
     output += content.join("\n")
 
+    const totalLines = lines
     const lastReadLine = offset + raw.length - 1
     const nextOffset = lastReadLine + 1
     const truncated = hasMoreLines || truncatedByBytes
@@ -206,6 +234,7 @@ export const ReadTool = Tool.define("read", {
 
 async function isBinaryFile(filepath: string, fileSize: number): Promise<boolean> {
   const ext = path.extname(filepath).toLowerCase()
+  // binary check for common non-text extensions
   switch (ext) {
     case ".zip":
     case ".tar":
@@ -249,98 +278,16 @@ async function isBinaryFile(filepath: string, fileSize: number): Promise<boolean
     const result = await fh.read(bytes, 0, sampleSize, 0)
     if (result.bytesRead === 0) return false
 
-    return hasBinaryContent(bytes, result.bytesRead)
+    let nonPrintableCount = 0
+    for (let i = 0; i < result.bytesRead; i++) {
+      if (bytes[i] === 0) return true
+      if (bytes[i] < 9 || (bytes[i] > 13 && bytes[i] < 32)) {
+        nonPrintableCount++
+      }
+    }
+    // If >30% non-printable characters, consider it binary
+    return nonPrintableCount / result.bytesRead > 0.3
   } finally {
     await fh.close()
   }
-}
-
-function hasBinaryContent(bytes: Buffer | Uint8Array, length: number): boolean {
-  let nonPrintable = 0
-  for (let i = 0; i < length; i++) {
-    if (bytes[i] === 0) return true
-    if (bytes[i]! < 9 || (bytes[i]! > 13 && bytes[i]! < 32)) nonPrintable++
-  }
-  return nonPrintable / length > 0.3
-}
-
-interface ReadResult {
-  raw: string[]
-  lines: number
-  truncatedByBytes: boolean
-  hasMoreLines: boolean
-}
-
-/** Fast path: load entire file via Bun.file() for files ≤ FAST_READ_LIMIT */
-async function readFast(filepath: string, start: number, limit: number): Promise<ReadResult> {
-  const buf = await Bun.file(filepath).text()
-  if (buf.length === 0) return { raw: [], lines: 0, truncatedByBytes: false, hasMoreLines: false }
-  const all = buf.split(/\r?\n/)
-  // If file ends with newline, split produces an empty trailing element
-  if (all.length > 1 && all[all.length - 1] === "") all.pop()
-  const total = all.length
-
-  const raw: string[] = []
-  let bytes = 0
-  let truncatedByBytes = false
-  let hasMoreLines = false
-
-  for (let i = start; i < total; i++) {
-    if (raw.length >= limit) {
-      hasMoreLines = true
-      break
-    }
-    const text = all[i]!
-    const line = text.length > MAX_LINE_LENGTH ? text.substring(0, MAX_LINE_LENGTH) + MAX_LINE_SUFFIX : text
-    const size = Buffer.byteLength(line, "utf-8") + (raw.length > 0 ? 1 : 0)
-    if (bytes + size > MAX_BYTES) {
-      truncatedByBytes = true
-      hasMoreLines = true
-      break
-    }
-    raw.push(line)
-    bytes += size
-  }
-
-  // Check for remaining lines after limit
-  if (!hasMoreLines && start + raw.length < total) hasMoreLines = true
-
-  return { raw, lines: total, truncatedByBytes, hasMoreLines }
-}
-
-/** Fallback: streaming readline for large files (> FAST_READ_LIMIT) */
-async function readStream(filepath: string, start: number, limit: number): Promise<ReadResult> {
-  const stream = createReadStream(filepath, { encoding: "utf8" })
-  const rl = createInterface({ input: stream, crlfDelay: Infinity })
-
-  const raw: string[] = []
-  let bytes = 0
-  let lines = 0
-  let truncatedByBytes = false
-  let hasMoreLines = false
-
-  try {
-    for await (const text of rl) {
-      lines += 1
-      if (lines <= start) continue
-      if (raw.length >= limit) {
-        hasMoreLines = true
-        continue
-      }
-      const line = text.length > MAX_LINE_LENGTH ? text.substring(0, MAX_LINE_LENGTH) + MAX_LINE_SUFFIX : text
-      const size = Buffer.byteLength(line, "utf-8") + (raw.length > 0 ? 1 : 0)
-      if (bytes + size > MAX_BYTES) {
-        truncatedByBytes = true
-        hasMoreLines = true
-        break
-      }
-      raw.push(line)
-      bytes += size
-    }
-  } finally {
-    rl.close()
-    stream.destroy()
-  }
-
-  return { raw, lines, truncatedByBytes, hasMoreLines }
 }

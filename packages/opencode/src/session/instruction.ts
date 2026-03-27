@@ -46,12 +46,8 @@ export namespace InstructionPrompt {
   const state = Instance.state(() => {
     return {
       claims: new Map<string, Set<string>>(),
-      cache: undefined as { paths: Set<string>; result: string[]; time: number } | undefined,
     }
   })
-
-  // Cache TTL: re-check file mtimes every 30 seconds
-  const CACHE_TTL = 30_000
 
   function isClaimed(messageID: string, filepath: string) {
     const claimed = state().claims.get(messageID)
@@ -119,11 +115,6 @@ export namespace InstructionPrompt {
   }
 
   export async function system() {
-    const s = state()
-    if (s.cache && Date.now() - s.cache.time < CACHE_TTL) {
-      return s.cache.result
-    }
-
     const config = await Config.get()
     const paths = await systemPaths()
 
@@ -147,11 +138,7 @@ export namespace InstructionPrompt {
         .then((x) => (x ? "Instructions from: " + url + "\n" + x : "")),
     )
 
-    return Promise.all([...files, ...fetches]).then((result) => {
-      const filtered = result.filter(Boolean) as string[]
-      state().cache = { paths, result: filtered, time: Date.now() }
-      return filtered
-    })
+    return Promise.all([...files, ...fetches]).then((result) => result.filter(Boolean))
   }
 
   export function loaded(messages: MessageV2.WithParts[]) {

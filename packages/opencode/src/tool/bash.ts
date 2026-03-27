@@ -51,9 +51,6 @@ const parser = lazy(async () => {
   return p
 })
 
-// Eager warm-up: fire-and-forget to eliminate cold-start on first bash call
-parser()
-
 // TODO: we may wanna rename this tool so it works better on other shells
 export const BashTool = Tool.define("bash", async () => {
   const shell = Shell.acceptable()

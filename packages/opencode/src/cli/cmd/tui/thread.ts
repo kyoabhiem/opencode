@@ -154,14 +154,6 @@ export const TuiThreadCommand = cmd({
       process.on("unhandledRejection", error)
       process.on("SIGUSR2", reload)
 
-      // Safety net: if SIGHUP isn't handled by the TUI layer (app.tsx),
-      // force cleanup after a short grace period.
-      const hup = async () => {
-        await stop()
-        process.exit(0)
-      }
-      process.once("SIGHUP", hup)
-
       let stopped = false
       const stop = async () => {
         if (stopped) return
@@ -169,7 +161,6 @@ export const TuiThreadCommand = cmd({
         process.off("uncaughtException", error)
         process.off("unhandledRejection", error)
         process.off("SIGUSR2", reload)
-        process.off("SIGHUP", hup)
         await withTimeout(client.call("shutdown", undefined), 5000).catch((error) => {
           Log.Default.warn("worker shutdown failed", {
             error: errorMessage(error),
