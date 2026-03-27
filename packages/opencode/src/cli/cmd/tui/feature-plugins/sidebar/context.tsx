@@ -162,10 +162,11 @@ function View(props: { api: TuiPluginApi; session_id: string }) {
         }
       }
       if (!match) continue
-      const inputCost = g.input * match.cost.input
-      const outputCost = (g.output + g.reasoning) * match.cost.output
-      const readCost = g.cacheRead * match.cost.cache.read
-      const writeCost = g.cacheWrite * match.cost.cache.write
+      const M = 1_000_000
+      const inputCost = (g.input * match.cost.input) / M
+      const outputCost = ((g.output + g.reasoning) * match.cost.output) / M
+      const readCost = (g.cacheRead * match.cost.cache.read) / M
+      const writeCost = (g.cacheWrite * match.cost.cache.write) / M
       const sim = inputCost + outputCost + readCost + writeCost
       rows.push({
         label: g.modelID,
@@ -230,7 +231,7 @@ function View(props: { api: TuiPluginApi; session_id: string }) {
                 {fmtCost(
                   modelGroups().reduce((s, g) => {
                     const m = props.api.state.provider.find((p) => p.id === g.providerID)?.models[g.modelID]
-                    return s + (m ? g.input * m.cost.input : 0)
+                    return s + (m ? (g.input * m.cost.input) / 1e6 : 0)
                   }, 0),
                 )}
               </text>
@@ -242,7 +243,7 @@ function View(props: { api: TuiPluginApi; session_id: string }) {
                 {fmtCost(
                   modelGroups().reduce((s, g) => {
                     const m = props.api.state.provider.find((p) => p.id === g.providerID)?.models[g.modelID]
-                    return s + (m ? (g.output + g.reasoning) * m.cost.output : 0)
+                    return s + (m ? ((g.output + g.reasoning) * m.cost.output) / 1e6 : 0)
                   }, 0),
                 )}
               </text>
@@ -254,7 +255,7 @@ function View(props: { api: TuiPluginApi; session_id: string }) {
                 {fmtCost(
                   modelGroups().reduce((s, g) => {
                     const m = props.api.state.provider.find((p) => p.id === g.providerID)?.models[g.modelID]
-                    return s + (m ? g.cacheRead * m.cost.cache.read : 0)
+                    return s + (m ? (g.cacheRead * m.cost.cache.read) / 1e6 : 0)
                   }, 0),
                 )}
               </text>
@@ -266,7 +267,7 @@ function View(props: { api: TuiPluginApi; session_id: string }) {
                 {fmtCost(
                   modelGroups().reduce((s, g) => {
                     const m = props.api.state.provider.find((p) => p.id === g.providerID)?.models[g.modelID]
-                    return s + (m ? g.cacheWrite * m.cost.cache.write : 0)
+                    return s + (m ? (g.cacheWrite * m.cost.cache.write) / 1e6 : 0)
                   }, 0),
                 )}
               </text>
