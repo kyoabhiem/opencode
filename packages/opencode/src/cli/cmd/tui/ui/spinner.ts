@@ -151,42 +151,36 @@ function createKnightRiderTrail(options: AdvancedGradientOptions): ColorGenerato
 
   let cachedFrameIndex = -1
   let cachedState: ScannerState | null = null
+  // Clone once per frame to avoid mutating the shared defaultRgba across char iterations
+  let frameDefault: RGBA = defaultRgba
 
   return (frameIndex: number, charIndex: number, _totalFrames: number, totalChars: number) => {
     if (frameIndex !== cachedFrameIndex) {
       cachedFrameIndex = frameIndex
       cachedState = getScannerState(frameIndex, totalChars, options)
-    }
 
-    const state = cachedState!
-
-    const index = calculateColorIndex(frameIndex, charIndex, totalChars, options, state)
-
-    // Calculate global fade for inactive dots during hold or movement
-    const { isHolding, holdProgress, holdTotal, movementProgress, movementTotal } = state
-
-    let fadeFactor = 1.0
-    if (enableFading) {
-      if (isHolding && holdTotal > 0) {
-        // Fade out linearly to minAlpha
-        const progress = Math.min(holdProgress / holdTotal, 1)
-        fadeFactor = Math.max(minAlpha, 1 - progress * (1 - minAlpha))
-      } else if (!isHolding && movementTotal > 0) {
-        // Fade in linearly from minAlpha during movement
-        const progress = Math.min(movementProgress / Math.max(1, movementTotal - 1), 1)
-        fadeFactor = minAlpha + progress * (1 - minAlpha)
+      // Compute fade factor once per frame
+      const { isHolding, holdProgress, holdTotal, movementProgress, movementTotal } = cachedState
+      let fadeFactor = 1.0
+      if (enableFading) {
+        if (isHolding && holdTotal > 0) {
+          const progress = Math.min(holdProgress / holdTotal, 1)
+          fadeFactor = Math.max(minAlpha, 1 - progress * (1 - minAlpha))
+        } else if (!isHolding && movementTotal > 0) {
+          const progress = Math.min(movementProgress / Math.max(1, movementTotal - 1), 1)
+          fadeFactor = minAlpha + progress * (1 - minAlpha)
+        }
       }
+      frameDefault = RGBA.fromValues(defaultRgba.r, defaultRgba.g, defaultRgba.b, baseInactiveAlpha * fadeFactor)
     }
 
-    // Combine base inactive alpha with the fade factor
-    // This ensures inactiveFactor is respected while still allowing fading animation
-    defaultRgba.a = baseInactiveAlpha * fadeFactor
+    const index = calculateColorIndex(frameIndex, charIndex, totalChars, options, cachedState!)
 
     if (index === -1) {
-      return defaultRgba
+      return frameDefault
     }
 
-    return colors[index] ?? defaultRgba
+    return colors[index] ?? frameDefault
   }
 }
 
