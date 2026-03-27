@@ -33,7 +33,7 @@ export const EventRoutes = lazy(() =>
       c.header("X-Accel-Buffering", "no")
       c.header("X-Content-Type-Options", "nosniff")
       return streamSSE(c, async (stream) => {
-        const q = new AsyncQueue<string | null>()
+        const q = new AsyncQueue<string | null>(10_000)
         let done = false
 
         q.push(
@@ -53,9 +53,10 @@ export const EventRoutes = lazy(() =>
           )
         }, 10_000)
 
-        const unsub = Bus.subscribeAll((event) => {
-          q.push(JSON.stringify(event))
-          if (event.type === Bus.InstanceDisposed.type) {
+        // Subscribe to pre-serialized events to avoid redundant JSON.stringify per connection
+        const unsub = Bus.subscribeAllSerialized((data) => {
+          q.push(data)
+          if (data.includes('"server.instance.disposed"')) {
             stop()
           }
         })

@@ -296,6 +296,8 @@ export namespace SessionPrompt {
 
     let step = 0
     let pruneInterval = 5
+    // Cache system prompt token estimate across iterations (system prompt is mostly stable)
+    let sysTokenCache: { parts: string[]; tokens: number } | undefined
     const session = await Session.get(sessionID)
     while (true) {
       await SessionStatus.set(sessionID, { type: "busy" })
@@ -682,7 +684,18 @@ export namespace SessionPrompt {
       ]
 
       // Pre-flight: estimate tokens and trigger compaction before sending
-      const sysTokens = system.reduce((sum, s) => sum + Token.estimate(s), 0)
+      // Cache system token count — only recompute when system prompt parts change
+      let sysTokens: number
+      if (
+        sysTokenCache &&
+        sysTokenCache.parts.length === system.length &&
+        sysTokenCache.parts.every((p, i) => p === system[i])
+      ) {
+        sysTokens = sysTokenCache.tokens
+      } else {
+        sysTokens = system.reduce((sum, s) => sum + Token.estimate(s), 0)
+        sysTokenCache = { parts: system, tokens: sysTokens }
+      }
       if (step > 1 && (await SessionCompaction.shouldCompact({ messages: pending, model, system: sysTokens }))) {
         await SessionCompaction.create({
           sessionID,
@@ -952,6 +965,16 @@ export namespace SessionPrompt {
       }
       tools[key] = item
     }
+
+    const builtin = Object.keys(tools).filter((k) => !k.includes("_") || k.startsWith("_"))
+    const mcp = Object.keys(tools).filter((k) => k.includes("_") && !k.startsWith("_"))
+    log.info("tools resolved", {
+      agent: input.agent.name,
+      total: Object.keys(tools).length,
+      builtin: builtin.length,
+      mcp: mcp.length,
+      mcpTools: mcp.length > 0 ? mcp.join(", ") : "none",
+    })
 
     return tools
   }

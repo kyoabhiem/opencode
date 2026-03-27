@@ -917,7 +917,7 @@ export namespace Session {
       // It looks like OpenCode's cost calculation assumes all providers return inputTokens the same way Anthropic does (I'm guessing getUsage logic was originally implemented with anthropic), so it's causing incorrect cost calculation for OpenRouter and others.
       const excludesCachedTokens = !!(input.metadata?.["anthropic"] || input.metadata?.["bedrock"])
       const adjustedInputTokens = safe(
-        excludesCachedTokens ? inputTokens : inputTokens - cacheReadInputTokens - cacheWriteInputTokens,
+        excludesCachedTokens ? inputTokens : Math.max(0, inputTokens - cacheReadInputTokens - cacheWriteInputTokens),
       )
 
       const total = iife(() => {

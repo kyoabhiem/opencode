@@ -123,15 +123,24 @@ export namespace Snapshot {
               return file
             })
 
+            // Cache excludes content to avoid re-reading when called multiple times (track + patch)
+            let excludeCache: { file: string | undefined; content: string } | undefined
+
             const sync = Effect.fnUntraced(function* () {
               const file = yield* excludes()
               const target = path.join(state.gitdir, "info", "exclude")
               yield* fs.ensureDir(path.join(state.gitdir, "info")).pipe(Effect.orDie)
               if (!file) {
-                yield* fs.writeFileString(target, "").pipe(Effect.orDie)
+                if (excludeCache?.file !== undefined) {
+                  excludeCache = { file: undefined, content: "" }
+                  yield* fs.writeFileString(target, "").pipe(Effect.orDie)
+                }
                 return
               }
-              yield* fs.writeFileString(target, yield* read(file)).pipe(Effect.orDie)
+              const content = yield* read(file)
+              if (excludeCache && excludeCache.file === file && excludeCache.content === content) return
+              excludeCache = { file, content }
+              yield* fs.writeFileString(target, content).pipe(Effect.orDie)
             })
 
             const add = Effect.fnUntraced(function* () {

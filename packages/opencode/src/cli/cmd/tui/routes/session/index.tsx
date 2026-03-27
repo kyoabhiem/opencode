@@ -1697,6 +1697,9 @@ function InlineTool(props: {
   onClick?: () => void
 }) {
   const [margin, setMargin] = createSignal(0)
+  let lastElHeight = -1
+  let lastPrevHeight = -1
+  let lastPrevId = ""
   const { theme } = useTheme()
   const ctx = use()
   const sync = useSync()
@@ -1739,20 +1742,29 @@ function InlineTool(props: {
       renderBefore={function () {
         const el = this as BoxRenderable
         const parent = el.parent
-        if (!parent) {
-          return
-        }
+        if (!parent) return
         if (el.height > 1) {
-          setMargin(1)
+          if (lastElHeight !== el.height) {
+            lastElHeight = el.height
+            setMargin(1)
+          }
           return
         }
         const children = parent.getChildren()
         const index = children.indexOf(el)
         const previous = children[index - 1]
         if (!previous) {
-          setMargin(0)
+          if (lastElHeight !== el.height) {
+            lastElHeight = el.height
+            setMargin(0)
+          }
           return
         }
+        // Skip DOM walk if heights and sibling identity unchanged
+        if (el.height === lastElHeight && previous.height === lastPrevHeight && previous.id === lastPrevId) return
+        lastElHeight = el.height
+        lastPrevHeight = previous.height
+        lastPrevId = previous.id
         if (previous.height > 1 || previous.id.startsWith("text-")) {
           setMargin(1)
           return

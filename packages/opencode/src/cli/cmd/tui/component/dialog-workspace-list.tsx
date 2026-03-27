@@ -112,11 +112,9 @@ function DialogWorkspaceCreate(props: { onSelect: (workspaceID: string) => Promi
     if (creating()) return
     setCreating(type)
 
-    const result = await sdk.client.experimental.workspace.create({ type, branch: null }).catch((err) => {
-      console.log(err)
+    const result = await sdk.client.experimental.workspace.create({ type, branch: null }).catch(() => {
       return undefined
     })
-    console.log(JSON.stringify(result, null, 2))
     const workspace = result?.data
     if (!workspace) {
       setCreating(undefined)

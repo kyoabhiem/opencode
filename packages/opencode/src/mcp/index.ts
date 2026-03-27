@@ -611,9 +611,19 @@ export namespace MCP {
     const clientsSnapshot = await clients()
     const defaultTimeout = cfg.experimental?.mcp_timeout
 
+    const total = Object.keys(config).length
+    const statuses = Object.entries(s.status).map(([k, v]) => `${k}:${v.status}`)
     const connectedClients = Object.entries(clientsSnapshot).filter(
       ([clientName]) => s.status[clientName]?.status === "connected",
     )
+
+    if (total > 0) {
+      log.info("mcp tools listing", {
+        configured: total,
+        connected: connectedClients.length,
+        statuses: statuses.join(", "),
+      })
+    }
 
     const toolsResults = await Promise.all(
       connectedClients.map(async ([clientName, client]) => {
@@ -625,6 +635,12 @@ export namespace MCP {
           }
           s.status[clientName] = failedStatus
           delete s.clients[clientName]
+          Bus.publish(TuiEvent.ToastShow, {
+            title: "MCP Server Disconnected",
+            message: `Server "${clientName}" failed to list tools: ${e instanceof Error ? e.message : String(e)}`,
+            variant: "error",
+            duration: 8000,
+          }).catch((err) => log.debug("failed to show toast", { error: err }))
           return undefined
         })
         return { clientName, client, toolsResult }

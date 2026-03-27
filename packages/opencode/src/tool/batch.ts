@@ -7,6 +7,10 @@ const DISALLOWED = new Set(["batch"])
 const FILTERED_FROM_SUGGESTIONS = new Set(["invalid", "patch", ...DISALLOWED])
 
 export const BatchTool = Tool.define("batch", async () => {
+  const { ToolRegistry } = await import("./registry")
+  const available = await ToolRegistry.tools({ modelID: ModelID.make(""), providerID: ProviderID.make("") })
+  const toolMap = new Map(available.map((t) => [t.id, t]))
+
   return {
     description: DESCRIPTION,
     parameters: z.object({
@@ -36,10 +40,6 @@ export const BatchTool = Tool.define("batch", async () => {
 
       const toolCalls = params.tool_calls.slice(0, 25)
       const discardedCalls = params.tool_calls.slice(25)
-
-      const { ToolRegistry } = await import("./registry")
-      const availableTools = await ToolRegistry.tools({ modelID: ModelID.make(""), providerID: ProviderID.make("") })
-      const toolMap = new Map(availableTools.map((t) => [t.id, t]))
 
       const executeCall = async (call: (typeof toolCalls)[0]) => {
         const callStartTime = Date.now()

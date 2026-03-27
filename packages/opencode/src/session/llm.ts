@@ -299,14 +299,25 @@ export namespace LLM {
   }
 
   async function resolveTools(input: Pick<StreamInput, "tools" | "agent" | "permission" | "user">) {
+    const before = Object.keys(input.tools).length
     const disabled = Permission.disabled(
       Object.keys(input.tools),
       Permission.merge(input.agent.permission, input.permission ?? []),
     )
+    const removed: string[] = []
     for (const tool of Object.keys(input.tools)) {
       if (input.user.tools?.[tool] === false || disabled.has(tool)) {
+        removed.push(tool)
         delete input.tools[tool]
       }
+    }
+    if (removed.length > 0) {
+      log.info("tools filtered by permissions", {
+        agent: input.agent.name,
+        before,
+        after: Object.keys(input.tools).length,
+        removed: removed.join(", "),
+      })
     }
     return input.tools
   }

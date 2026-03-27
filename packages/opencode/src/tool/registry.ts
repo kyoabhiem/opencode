@@ -109,6 +109,17 @@ export namespace ToolRegistry {
         }),
       )
 
+      // Cache resolved tools keyed by (providerID, modelID, agentName).
+      // These do not change within a prompt loop, so we avoid re-initialising
+      // 16+ tools, re-computing JSON schemas, and re-triggering plugin hooks
+      // on every iteration.
+      let resolved:
+        | {
+            key: string
+            value: (Awaited<ReturnType<Tool.Info["init"]>> & { id: string })[]
+          }
+        | undefined
+
       async function all(custom: Tool.Info[]): Promise<Tool.Info[]> {
         const cfg = await Config.get()
         const question = ["app", "cli", "desktop"].includes(Flag.OPENCODE_CLIENT) || Flag.OPENCODE_ENABLE_QUESTION_TOOL
@@ -141,9 +152,11 @@ export namespace ToolRegistry {
         const idx = state.custom.findIndex((t) => t.id === tool.id)
         if (idx >= 0) {
           state.custom.splice(idx, 1, tool)
-          return
+        } else {
+          state.custom.push(tool)
         }
-        state.custom.push(tool)
+        // Invalidate resolved cache when tools change
+        resolved = undefined
       })
 
       const ids = Effect.fn("ToolRegistry.ids")(function* () {
@@ -156,9 +169,15 @@ export namespace ToolRegistry {
         model: { providerID: ProviderID; modelID: ModelID },
         agent?: Agent.Info,
       ) {
+        const key = `${model.providerID}\0${model.modelID}\0${agent?.name ?? ""}`
+        if (resolved?.key === key) {
+          log.debug("tools cache hit", { key })
+          return resolved.value
+        }
+
         const state = yield* InstanceState.get(cache)
         const allTools = yield* Effect.promise(() => all(state.custom))
-        return yield* Effect.promise(() =>
+        const result = yield* Effect.promise(() =>
           Promise.all(
             allTools
               .filter((tool) => {
@@ -192,6 +211,8 @@ export namespace ToolRegistry {
               }),
           ),
         )
+        resolved = { key, value: result }
+        return result
       })
 
       return Service.of({ register, ids, tools })

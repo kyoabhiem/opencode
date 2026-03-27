@@ -131,6 +131,15 @@ export function tui(input: {
       resolve()
     }
 
+    // When terminal closes (e.g. Ghostty tab close), SIGHUP fires.
+    // @opentui catches it and calls renderer.destroy(), but never
+    // resolves this Promise — so the cleanup chain in thread.ts
+    // never runs. Handle it explicitly here.
+    const hup = () => {
+      onExit()
+    }
+    process.once("SIGHUP", hup)
+
     render(
       () => {
         return (

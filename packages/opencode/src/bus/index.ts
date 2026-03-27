@@ -17,7 +17,7 @@ export namespace Bus {
 
   const state = Instance.state(
     () => {
-      const subscriptions = new Map<any, Subscription[]>()
+      const subscriptions = new Map<string, Set<Subscription>>()
 
       return {
         subscriptions,
@@ -32,7 +32,7 @@ export namespace Bus {
           directory: Instance.directory,
         },
       }
-      for (const sub of [...wildcard]) {
+      for (const sub of wildcard) {
         sub(event)
       }
     },
@@ -51,8 +51,9 @@ export namespace Bus {
     })
     const pending = []
     for (const key of [def.type, "*"]) {
-      const match = [...(state().subscriptions.get(key) ?? [])]
-      for (const sub of match) {
+      const subs = state().subscriptions.get(key)
+      if (!subs) continue
+      for (const sub of subs) {
         pending.push(sub(payload))
       }
     }
@@ -86,20 +87,35 @@ export namespace Bus {
     return raw("*", callback)
   }
 
+  /** Subscribe to all events as pre-serialized JSON strings. Avoids redundant JSON.stringify per subscriber. */
+  export function subscribeAllSerialized(callback: (data: string) => void) {
+    let cached: { ref: any; data: string } | undefined
+    return raw("*", (event) => {
+      if (cached && cached.ref === event) {
+        callback(cached.data)
+        return
+      }
+      const data = JSON.stringify(event)
+      cached = { ref: event, data }
+      callback(data)
+    })
+  }
+
   function raw(type: string, callback: (event: any) => void) {
     log.debug("subscribing", { type })
     const subscriptions = state().subscriptions
-    let match = subscriptions.get(type) ?? []
-    match.push(callback)
-    subscriptions.set(type, match)
+    let subs = subscriptions.get(type)
+    if (!subs) {
+      subs = new Set()
+      subscriptions.set(type, subs)
+    }
+    subs.add(callback)
 
     return () => {
       log.debug("unsubscribing", { type })
-      const match = subscriptions.get(type)
-      if (!match) return
-      const index = match.indexOf(callback)
-      if (index === -1) return
-      match.splice(index, 1)
+      const subs = subscriptions.get(type)
+      if (!subs) return
+      subs.delete(callback)
     }
   }
 }

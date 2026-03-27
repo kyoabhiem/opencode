@@ -67,12 +67,20 @@ export namespace Truncate {
         const maxLines = options.maxLines ?? MAX_LINES
         const maxBytes = cap ? Math.min(options.maxBytes ?? MAX_BYTES, cap) : (options.maxBytes ?? MAX_BYTES)
         const direction = options.direction ?? "head"
-        const lines = text.split("\n")
-        const totalBytes = Buffer.byteLength(text, "utf-8")
 
-        if (lines.length <= maxLines && totalBytes <= maxBytes) {
-          return { content: text, truncated: false } as const
+        // Fast path: avoid split+byteLength allocation when text fits within limits
+        const totalBytes = Buffer.byteLength(text, "utf-8")
+        if (totalBytes <= maxBytes) {
+          let count = 1
+          for (let i = 0; i < text.length; i++) {
+            if (text.charCodeAt(i) === 10) count++
+          }
+          if (count <= maxLines) {
+            return { content: text, truncated: false } as const
+          }
         }
+
+        const lines = text.split("\n")
 
         const out: string[] = []
         let i = 0

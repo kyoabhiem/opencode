@@ -71,7 +71,7 @@ export const GlobalRoutes = lazy(() =>
         c.header("X-Accel-Buffering", "no")
         c.header("X-Content-Type-Options", "nosniff")
         return streamSSE(c, async (stream) => {
-          const q = new AsyncQueue<string | null>()
+          const q = new AsyncQueue<string | null>(10_000)
           let done = false
 
           q.push(
