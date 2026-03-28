@@ -141,8 +141,8 @@ function rendererConfig(_config: TuiConfig.Info): CliRendererConfig {
   }
 }
 
-function errorMessage(error: unknown) {
-  const formatted = FormatError(error)
+async function errorMessage(error: unknown) {
+  const formatted = await FormatError(error)
   if (formatted !== undefined) return formatted
   if (
     typeof error === "object" &&
@@ -798,10 +798,10 @@ function App(props: { onSnapshot?: () => Promise<string[]> }) {
     }
   })
 
-  sdk.event.on("session.error", (evt) => {
+  sdk.event.on("session.error", async (evt) => {
     const error = evt.properties.error
     if (error && typeof error === "object" && error.name === "MessageAbortedError") return
-    const message = errorMessage(error)
+    const message = await errorMessage(error)
 
     toast.show({
       variant: "error",

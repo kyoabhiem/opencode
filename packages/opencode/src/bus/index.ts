@@ -84,7 +84,7 @@ export namespace Bus {
         return Effect.gen(function* () {
           const state = yield* InstanceState.get(cache)
           const payload: Payload = { type: def.type, properties }
-          log.info("publishing", { type: def.type })
+          log.debug("publishing", { type: def.type })
 
           const ps = state.typed.get(def.type)
           if (ps) yield* PubSub.publish(ps, payload)
@@ -98,29 +98,29 @@ export namespace Bus {
       }
 
       function subscribe<D extends BusEvent.Definition>(def: D): Stream.Stream<Payload<D>> {
-        log.info("subscribing", { type: def.type })
+        log.debug("subscribing", { type: def.type })
         return Stream.unwrap(
           Effect.gen(function* () {
             const state = yield* InstanceState.get(cache)
             const ps = yield* getOrCreate(state, def)
             return Stream.fromPubSub(ps)
           }),
-        ).pipe(Stream.ensuring(Effect.sync(() => log.info("unsubscribing", { type: def.type }))))
+        ).pipe(Stream.ensuring(Effect.sync(() => log.debug("unsubscribing", { type: def.type }))))
       }
 
       function subscribeAll(): Stream.Stream<Payload> {
-        log.info("subscribing", { type: "*" })
+        log.debug("subscribing", { type: "*" })
         return Stream.unwrap(
           Effect.gen(function* () {
             const state = yield* InstanceState.get(cache)
             return Stream.fromPubSub(state.wildcard)
           }),
-        ).pipe(Stream.ensuring(Effect.sync(() => log.info("unsubscribing", { type: "*" }))))
+        ).pipe(Stream.ensuring(Effect.sync(() => log.debug("unsubscribing", { type: "*" }))))
       }
 
       function on<T>(pubsub: PubSub.PubSub<T>, type: string, callback: (event: T) => unknown) {
         return Effect.gen(function* () {
-          log.info("subscribing", { type })
+          log.debug("subscribing", { type })
           const scope = yield* Scope.make()
           const subscription = yield* Scope.provide(scope)(PubSub.subscribe(pubsub))
 
@@ -139,7 +139,7 @@ export namespace Bus {
           )
 
           return () => {
-            log.info("unsubscribing", { type })
+            log.debug("unsubscribing", { type })
             Effect.runFork(Scope.close(scope, Exit.void))
           }
         })

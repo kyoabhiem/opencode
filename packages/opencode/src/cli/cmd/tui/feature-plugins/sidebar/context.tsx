@@ -23,6 +23,13 @@ function fmtDiff(n: number): string {
   return (n >= 0 ? "+" : "-") + fmtCost(Math.abs(n))
 }
 
+const TOK_COL = 8
+const COST_COL = 9
+
+function rowRight(tok: string, cost: string): string {
+  return tok.padStart(TOK_COL) + "  " + cost.padStart(COST_COL)
+}
+
 function View(props: { api: TuiPluginApi; session_id: string }) {
   const theme = () => props.api.theme.current
   const [expanded, setExpanded] = createStore({ tokens: false, orSim: false, anthropicSim: false })
@@ -124,17 +131,28 @@ function View(props: { api: TuiPluginApi; session_id: string }) {
     return { rate: (t.cacheRead / (t.cacheRead + t.input)) * 100, read: t.cacheRead, write: t.cacheWrite }
   })
 
-  // ---------- provider simulation helper ----------
-
   type SimResult = {
     rows: Array<{
       label: string
       context: number
+      tokens: number
       cost: number
-      detail: { input: number; output: number; cacheRead: number; cacheWrite: number; diff: number }
+      count: number
+      detail: {
+        input: number
+        output: number
+        cacheRead: number
+        cacheWrite: number
+        diff: number
+        tokIn: number
+        tokOut: number
+        tokRead: number
+        tokWrite: number
+      }
     }>
     actual: number
     sim: number
+    tokens: number
   }
 
   function simulate(providerID: string, skip?: string): SimResult | undefined {
@@ -145,6 +163,7 @@ function View(props: { api: TuiPluginApi; session_id: string }) {
     const rows: SimResult["rows"] = []
     let totalActual = 0
     let totalSim = 0
+    let totalTokens = 0
     for (const g of groups) {
       if (skip && g.providerID === skip) continue
       const src = props.api.state.provider.find((p) => p.id === g.providerID)?.models[g.modelID]
@@ -162,29 +181,37 @@ function View(props: { api: TuiPluginApi; session_id: string }) {
         }
       }
       if (!match) continue
-      const M = 1_000_000
-      const inputCost = (g.input * match.cost.input) / M
-      const outputCost = ((g.output + g.reasoning) * match.cost.output) / M
-      const readCost = (g.cacheRead * match.cost.cache.read) / M
-      const writeCost = (g.cacheWrite * match.cost.cache.write) / M
+      const m = 1_000_000
+      const inputCost = (g.input * match.cost.input) / m
+      const outputCost = ((g.output + g.reasoning) * match.cost.output) / m
+      const readCost = (g.cacheRead * match.cost.cache.read) / m
+      const writeCost = (g.cacheWrite * match.cost.cache.write) / m
       const sim = inputCost + outputCost + readCost + writeCost
+      const tokens = g.input + g.output + g.reasoning + g.cacheRead + g.cacheWrite
       rows.push({
-        label: g.modelID,
+        label: match.name ?? g.modelID,
         context: match.limit.context,
+        tokens,
         cost: sim,
+        count: g.count,
         detail: {
           input: inputCost,
           output: outputCost,
           cacheRead: readCost,
           cacheWrite: writeCost,
           diff: sim - g.cost,
+          tokIn: g.input,
+          tokOut: g.output + g.reasoning,
+          tokRead: g.cacheRead,
+          tokWrite: g.cacheWrite,
         },
       })
       totalActual += g.cost
       totalSim += sim
+      totalTokens += tokens
     }
     if (rows.length === 0) return undefined
-    return { rows, actual: totalActual, sim: totalSim }
+    return { rows, actual: totalActual, sim: totalSim, tokens: totalTokens }
   }
 
   const orSim = createMemo(() => simulate("openrouter"))
@@ -192,7 +219,6 @@ function View(props: { api: TuiPluginApi; session_id: string }) {
 
   return (
     <box>
-      {/* Usage + cost */}
       <box flexDirection="row" justifyContent="space-between">
         <text fg={theme().text}>
           <b>Usage</b>
@@ -200,17 +226,18 @@ function View(props: { api: TuiPluginApi; session_id: string }) {
         <text fg={theme().success}>{fmtCost(cost())}</text>
       </box>
 
-      {/* Context line */}
-      <Show when={contextSize() > 0}>
+      {contextSize() > 0 && (
         <box flexDirection="row" justifyContent="space-between">
-          <text fg={theme().textMuted}>Context</text>
+          <text fg={theme().textMuted}>
+            Context (
+            {lastModel() ? Math.min(100, Math.round((contextSize() / lastModel()!.limit.context) * 100)) + "%" : "…"})
+          </text>
           <text fg={theme().textMuted}>
             {fmtTok(contextSize())} / {lastModel() ? fmtTok(lastModel()!.limit.context) : "?"}
           </text>
         </box>
-      </Show>
+      )}
 
-      {/* Tokens collapsed/expanded */}
       <box>
         <box
           flexDirection="row"
@@ -218,189 +245,197 @@ function View(props: { api: TuiPluginApi; session_id: string }) {
           onMouseDown={() => setExpanded("tokens", !expanded.tokens)}
         >
           <text fg={theme().text}>
-            <span fg={theme().textMuted}>{expanded.tokens ? "▼" : "▶"}</span> Tokens
+            <span style={{ fg: theme().textMuted }}>{expanded.tokens ? "▼" : "▶"}</span> Tokens
           </text>
           <text fg={theme().text}>{fmtTok(totals().total)}</text>
         </box>
-        <Show when={expanded.tokens}>
+        {expanded.tokens && (
           <box>
             <box flexDirection="row" justifyContent="space-between">
               <text fg={theme().textMuted}> in</text>
               <text fg={theme().textMuted}>
-                {fmtTok(totals().input)}{" "}
-                {fmtCost(
-                  modelGroups().reduce((s, g) => {
-                    const m = props.api.state.provider.find((p) => p.id === g.providerID)?.models[g.modelID]
-                    return s + (m ? (g.input * m.cost.input) / 1e6 : 0)
-                  }, 0),
+                {rowRight(
+                  fmtTok(totals().input),
+                  fmtCost(
+                    modelGroups().reduce((s, g) => {
+                      const m = props.api.state.provider.find((p) => p.id === g.providerID)?.models[g.modelID]
+                      return s + (m ? (g.input * m.cost.input) / 1e6 : 0)
+                    }, 0),
+                  ),
                 )}
               </text>
             </box>
             <box flexDirection="row" justifyContent="space-between">
               <text fg={theme().textMuted}> out</text>
               <text fg={theme().textMuted}>
-                {fmtTok(totals().output)}{" "}
-                {fmtCost(
-                  modelGroups().reduce((s, g) => {
-                    const m = props.api.state.provider.find((p) => p.id === g.providerID)?.models[g.modelID]
-                    return s + (m ? ((g.output + g.reasoning) * m.cost.output) / 1e6 : 0)
-                  }, 0),
+                {rowRight(
+                  fmtTok(totals().output),
+                  fmtCost(
+                    modelGroups().reduce((s, g) => {
+                      const m = props.api.state.provider.find((p) => p.id === g.providerID)?.models[g.modelID]
+                      return s + (m ? ((g.output + g.reasoning) * m.cost.output) / 1e6 : 0)
+                    }, 0),
+                  ),
                 )}
               </text>
             </box>
             <box flexDirection="row" justifyContent="space-between">
               <text fg={theme().textMuted}> read</text>
               <text fg={theme().textMuted}>
-                {fmtTok(totals().cacheRead)}{" "}
-                {fmtCost(
-                  modelGroups().reduce((s, g) => {
-                    const m = props.api.state.provider.find((p) => p.id === g.providerID)?.models[g.modelID]
-                    return s + (m ? (g.cacheRead * m.cost.cache.read) / 1e6 : 0)
-                  }, 0),
+                {rowRight(
+                  fmtTok(totals().cacheRead),
+                  fmtCost(
+                    modelGroups().reduce((s, g) => {
+                      const m = props.api.state.provider.find((p) => p.id === g.providerID)?.models[g.modelID]
+                      return s + (m ? (g.cacheRead * m.cost.cache.read) / 1e6 : 0)
+                    }, 0),
+                  ),
                 )}
               </text>
             </box>
             <box flexDirection="row" justifyContent="space-between">
               <text fg={theme().textMuted}> write</text>
               <text fg={theme().textMuted}>
-                {fmtTok(totals().cacheWrite)}{" "}
-                {fmtCost(
-                  modelGroups().reduce((s, g) => {
-                    const m = props.api.state.provider.find((p) => p.id === g.providerID)?.models[g.modelID]
-                    return s + (m ? (g.cacheWrite * m.cost.cache.write) / 1e6 : 0)
-                  }, 0),
+                {rowRight(
+                  fmtTok(totals().cacheWrite),
+                  fmtCost(
+                    modelGroups().reduce((s, g) => {
+                      const m = props.api.state.provider.find((p) => p.id === g.providerID)?.models[g.modelID]
+                      return s + (m ? (g.cacheWrite * m.cost.cache.write) / 1e6 : 0)
+                    }, 0),
+                  ),
                 )}
               </text>
             </box>
-            <Show when={cacheStats()}>
-              {(stats) => (
-                <box flexDirection="row" justifyContent="space-between">
-                  <text fg={theme().textMuted}> hit rate</text>
-                  <text fg={theme().success}>{stats().rate.toFixed(0)}%</text>
-                </box>
-              )}
-            </Show>
+            {cacheStats() && (
+              <box flexDirection="row" justifyContent="space-between">
+                <text fg={theme().textMuted}> hit rate</text>
+                <text fg={theme().success}>{cacheStats()!.rate.toFixed(0)}%</text>
+              </box>
+            )}
             <box flexDirection="row" justifyContent="space-between">
               <text fg={theme().textMuted}> turn</text>
               <text fg={theme().textMuted}>{messages().length}</text>
             </box>
           </box>
-        </Show>
+        )}
       </box>
 
-      {/* OpenRouter simulation */}
-      <Show when={orSim()}>
-        {(sim) => (
-          <box>
-            <box
-              flexDirection="row"
-              justifyContent="space-between"
-              onMouseDown={() => setExpanded("orSim", !expanded.orSim)}
-            >
-              <text fg={theme().text}>
-                <span fg={theme().textMuted}>{expanded.orSim ? "▼" : "▶"}</span> via OpenRouter
-              </text>
-              <text fg={sim().sim - sim().actual >= 0 ? theme().error : theme().success}>
-                {fmtDiff(sim().sim - sim().actual)}
-              </text>
-            </box>
-            <Show when={expanded.orSim}>
-              <For each={sim().rows}>
-                {(row) => (
-                  <box>
-                    <box flexDirection="row" justifyContent="space-between">
-                      <text fg={theme().text} wrapMode="none">
-                        {" "}
-                        {row.label} ({fmtTok(row.context)})
-                      </text>
-                      <text fg={theme().text}>{fmtCost(row.cost)}</text>
-                    </box>
-                    <box flexDirection="row" justifyContent="space-between">
-                      <text fg={theme().textMuted}> in</text>
-                      <text fg={theme().textMuted}>{fmtCost(row.detail.input)}</text>
-                    </box>
-                    <box flexDirection="row" justifyContent="space-between">
-                      <text fg={theme().textMuted}> out</text>
-                      <text fg={theme().textMuted}>{fmtCost(row.detail.output)}</text>
-                    </box>
-                    <box flexDirection="row" justifyContent="space-between">
-                      <text fg={theme().textMuted}> cache read</text>
-                      <text fg={theme().textMuted}>{fmtCost(row.detail.cacheRead)}</text>
-                    </box>
-                    <box flexDirection="row" justifyContent="space-between">
-                      <text fg={theme().textMuted}> cache write</text>
-                      <text fg={theme().textMuted}>{fmtCost(row.detail.cacheWrite)}</text>
-                    </box>
-                    <box flexDirection="row" justifyContent="space-between">
-                      <text fg={theme().textMuted}> vs actual</text>
-                      <text fg={row.detail.diff >= 0 ? theme().error : theme().success}>
-                        {fmtDiff(row.detail.diff)}
-                      </text>
-                    </box>
-                  </box>
-                )}
-              </For>
-            </Show>
+      {orSim() && (
+        <box>
+          <box
+            flexDirection="row"
+            justifyContent="space-between"
+            onMouseDown={() => setExpanded("orSim", !expanded.orSim)}
+          >
+            <text fg={theme().text}>
+              <span style={{ fg: theme().textMuted }}>{expanded.orSim ? "▼" : "▶"}</span> via OpenRouter{" "}
+              {fmtTok(orSim()!.tokens)}
+            </text>
+            <text fg={orSim()!.sim - orSim()!.actual >= 0 ? theme().error : theme().success}>
+              {fmtDiff(orSim()!.sim - orSim()!.actual)}
+            </text>
           </box>
-        )}
-      </Show>
+          {expanded.orSim &&
+            orSim()!.rows.map((row) => (
+              <box>
+                <box flexDirection="row" justifyContent="space-between">
+                  <text fg={theme().text} wrapMode="none">
+                    {" "}
+                    {row.label} ({fmtTok(row.context)}) {fmtTok(row.tokens)}
+                  </text>
+                  <text fg={theme().text}>{fmtCost(row.cost)}</text>
+                </box>
+                <box flexDirection="row" justifyContent="space-between">
+                  <text fg={theme().textMuted}> in</text>
+                  <text fg={theme().textMuted}>{rowRight(fmtTok(row.detail.tokIn), fmtCost(row.detail.input))}</text>
+                </box>
+                <box flexDirection="row" justifyContent="space-between">
+                  <text fg={theme().textMuted}> out</text>
+                  <text fg={theme().textMuted}>{rowRight(fmtTok(row.detail.tokOut), fmtCost(row.detail.output))}</text>
+                </box>
+                <box flexDirection="row" justifyContent="space-between">
+                  <text fg={theme().textMuted}> cache read</text>
+                  <text fg={theme().textMuted}>
+                    {rowRight(fmtTok(row.detail.tokRead), fmtCost(row.detail.cacheRead))}
+                  </text>
+                </box>
+                <box flexDirection="row" justifyContent="space-between">
+                  <text fg={theme().textMuted}> cache write</text>
+                  <text fg={theme().textMuted}>
+                    {rowRight(fmtTok(row.detail.tokWrite), fmtCost(row.detail.cacheWrite))}
+                  </text>
+                </box>
+                <box flexDirection="row" justifyContent="space-between">
+                  <text fg={theme().textMuted}> turns</text>
+                  <text fg={theme().textMuted}>{row.count}</text>
+                </box>
+                <box flexDirection="row" justifyContent="space-between">
+                  <text fg={theme().textMuted}> vs actual</text>
+                  <text fg={row.detail.diff >= 0 ? theme().error : theme().success}>{fmtDiff(row.detail.diff)}</text>
+                </box>
+              </box>
+            ))}
+        </box>
+      )}
 
-      {/* Anthropic simulation */}
-      <Show when={anthropicSim()}>
-        {(sim) => (
-          <box>
-            <box
-              flexDirection="row"
-              justifyContent="space-between"
-              onMouseDown={() => setExpanded("anthropicSim", !expanded.anthropicSim)}
-            >
-              <text fg={theme().text}>
-                <span fg={theme().textMuted}>{expanded.anthropicSim ? "▼" : "▶"}</span> via Anthropic
-              </text>
-              <text fg={sim().sim - sim().actual >= 0 ? theme().error : theme().success}>
-                {fmtDiff(sim().sim - sim().actual)}
-              </text>
-            </box>
-            <Show when={expanded.anthropicSim}>
-              <For each={sim().rows}>
-                {(row) => (
-                  <box>
-                    <box flexDirection="row" justifyContent="space-between">
-                      <text fg={theme().text} wrapMode="none">
-                        {" "}
-                        {row.label} ({fmtTok(row.context)})
-                      </text>
-                      <text fg={theme().text}>{fmtCost(row.cost)}</text>
-                    </box>
-                    <box flexDirection="row" justifyContent="space-between">
-                      <text fg={theme().textMuted}> in</text>
-                      <text fg={theme().textMuted}>{fmtCost(row.detail.input)}</text>
-                    </box>
-                    <box flexDirection="row" justifyContent="space-between">
-                      <text fg={theme().textMuted}> out</text>
-                      <text fg={theme().textMuted}>{fmtCost(row.detail.output)}</text>
-                    </box>
-                    <box flexDirection="row" justifyContent="space-between">
-                      <text fg={theme().textMuted}> cache read</text>
-                      <text fg={theme().textMuted}>{fmtCost(row.detail.cacheRead)}</text>
-                    </box>
-                    <box flexDirection="row" justifyContent="space-between">
-                      <text fg={theme().textMuted}> cache write</text>
-                      <text fg={theme().textMuted}>{fmtCost(row.detail.cacheWrite)}</text>
-                    </box>
-                    <box flexDirection="row" justifyContent="space-between">
-                      <text fg={theme().textMuted}> vs actual</text>
-                      <text fg={row.detail.diff >= 0 ? theme().error : theme().success}>
-                        {fmtDiff(row.detail.diff)}
-                      </text>
-                    </box>
-                  </box>
-                )}
-              </For>
-            </Show>
+      {anthropicSim() && (
+        <box>
+          <box
+            flexDirection="row"
+            justifyContent="space-between"
+            onMouseDown={() => setExpanded("anthropicSim", !expanded.anthropicSim)}
+          >
+            <text fg={theme().text}>
+              <span style={{ fg: theme().textMuted }}>{expanded.anthropicSim ? "▼" : "▶"}</span> via Anthropic{" "}
+              {fmtTok(anthropicSim()!.tokens)}
+            </text>
+            <text fg={anthropicSim()!.sim - anthropicSim()!.actual >= 0 ? theme().error : theme().success}>
+              {fmtDiff(anthropicSim()!.sim - anthropicSim()!.actual)}
+            </text>
           </box>
-        )}
-      </Show>
+          {expanded.anthropicSim &&
+            anthropicSim()!.rows.map((row) => (
+              <box>
+                <box flexDirection="row" justifyContent="space-between">
+                  <text fg={theme().text} wrapMode="none">
+                    {" "}
+                    {row.label} ({fmtTok(row.context)}) {fmtTok(row.tokens)}
+                  </text>
+                  <text fg={theme().text}>{fmtCost(row.cost)}</text>
+                </box>
+                <box flexDirection="row" justifyContent="space-between">
+                  <text fg={theme().textMuted}> in</text>
+                  <text fg={theme().textMuted}>{rowRight(fmtTok(row.detail.tokIn), fmtCost(row.detail.input))}</text>
+                </box>
+                <box flexDirection="row" justifyContent="space-between">
+                  <text fg={theme().textMuted}> out</text>
+                  <text fg={theme().textMuted}>{rowRight(fmtTok(row.detail.tokOut), fmtCost(row.detail.output))}</text>
+                </box>
+                <box flexDirection="row" justifyContent="space-between">
+                  <text fg={theme().textMuted}> cache read</text>
+                  <text fg={theme().textMuted}>
+                    {rowRight(fmtTok(row.detail.tokRead), fmtCost(row.detail.cacheRead))}
+                  </text>
+                </box>
+                <box flexDirection="row" justifyContent="space-between">
+                  <text fg={theme().textMuted}> cache write</text>
+                  <text fg={theme().textMuted}>
+                    {rowRight(fmtTok(row.detail.tokWrite), fmtCost(row.detail.cacheWrite))}
+                  </text>
+                </box>
+                <box flexDirection="row" justifyContent="space-between">
+                  <text fg={theme().textMuted}> turns</text>
+                  <text fg={theme().textMuted}>{row.count}</text>
+                </box>
+                <box flexDirection="row" justifyContent="space-between">
+                  <text fg={theme().textMuted}> vs actual</text>
+                  <text fg={row.detail.diff >= 0 ? theme().error : theme().success}>{fmtDiff(row.detail.diff)}</text>
+                </box>
+              </box>
+            ))}
+        </box>
+      )}
     </box>
   )
 }

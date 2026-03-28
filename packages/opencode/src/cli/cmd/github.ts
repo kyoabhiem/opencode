@@ -3,10 +3,7 @@ import { exec } from "child_process"
 import { Filesystem } from "../../util/filesystem"
 import * as prompts from "@clack/prompts"
 import { map, pipe, sortBy, values } from "remeda"
-import { Octokit } from "@octokit/rest"
-import { graphql } from "@octokit/graphql"
-import * as core from "@actions/core"
-import * as github from "@actions/github"
+// Lazy-loaded in handler — these are heavy and only needed by `github run/install`
 import type { Context } from "@actions/github/lib/context"
 import type {
   IssueCommentEvent,
@@ -16,6 +13,8 @@ import type {
   WorkflowRunEvent,
   PullRequestEvent,
 } from "@octokit/webhooks-types"
+import type { Octokit as OctokitType } from "@octokit/rest"
+import type { graphql as OctoGraphql } from "@octokit/graphql"
 import { UI } from "../ui"
 import { cmd } from "./cmd"
 import { ModelsDev } from "../../provider/models"
@@ -436,6 +435,11 @@ export const GithubRunCommand = cmd({
     await bootstrap(process.cwd(), async () => {
       const isMock = args.token || args.event
 
+      const core = await import("@actions/core")
+      const github = await import("@actions/github")
+      const { Octokit } = await import("@octokit/rest")
+      const { graphql } = await import("@octokit/graphql")
+
       const context = isMock ? (JSON.parse(args.event!) as Context) : github.context
       if (!SUPPORTED_EVENTS.includes(context.eventName as (typeof SUPPORTED_EVENTS)[number])) {
         core.setFailed(`Unsupported event type: ${context.eventName}`)
@@ -479,8 +483,8 @@ export const GithubRunCommand = cmd({
       const shareBaseUrl = isMock ? "https://dev.opencode.ai" : "https://opencode.ai"
 
       let appToken: string
-      let octoRest: Octokit
-      let octoGraph: typeof graphql
+      let octoRest: OctokitType
+      let octoGraph: typeof OctoGraphql
       let gitConfig: string
       let session: { id: SessionID; title: string; version: string }
       let shareId: string | undefined

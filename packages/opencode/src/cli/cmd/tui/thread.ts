@@ -205,7 +205,7 @@ export const TuiThreadCommand = cmd({
 
       setTimeout(() => {
         client.call("checkUpgrade", { directory: cwd }).catch(() => {})
-      }, 1000).unref?.()
+      }, 300).unref?.()
 
       try {
         await tui({

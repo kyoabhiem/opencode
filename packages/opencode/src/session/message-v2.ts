@@ -936,6 +936,14 @@ export namespace MessageV2 {
           },
           { cause: e },
         ).toObject()
+      case e instanceof Error && e.message === "SSE read timed out":
+        return new MessageV2.APIError(
+          {
+            message: "SSE read timed out",
+            isRetryable: true,
+          },
+          { cause: e },
+        ).toObject()
       case (e as SystemError)?.code === "ECONNRESET":
         return new MessageV2.APIError(
           {

@@ -1,7 +1,7 @@
 import { Log } from "@/util/log"
 import { bootstrap } from "../bootstrap"
 import { cmd } from "./cmd"
-import { AgentSideConnection, ndJsonStream } from "@agentclientprotocol/sdk"
+// @agentclientprotocol/sdk lazy-loaded in handler (~8MB RSS)
 import { ACP } from "@/acp/agent"
 import { Server } from "@/server/server"
 import { createOpencodeClient } from "@opencode-ai/sdk/v2"
@@ -24,6 +24,8 @@ export const AcpCommand = cmd({
     await bootstrap(process.cwd(), async () => {
       const opts = await resolveNetworkOptions(args)
       const server = Server.listen(opts)
+
+      const { AgentSideConnection, ndJsonStream } = await import("@agentclientprotocol/sdk")
 
       const sdk = createOpencodeClient({
         baseUrl: `http://${server.hostname}:${server.port}`,
