@@ -912,6 +912,39 @@ export namespace Session {
     (input) => runPromise((svc) => svc.updatePartDelta(input)),
   )
 
+  type UsageTokens = { input: number; output: number; reasoning: number; cache: { read: number; write: number } }
+
+  function mutateUsage(sessionID: SessionID, tokens: UsageTokens, cost: number, sign: 1 | -1) {
+    Database.use((db) => {
+      const row = db
+        .update(SessionTable)
+        .set({
+          usage_input: sql`coalesce(${SessionTable.usage_input}, 0) + ${tokens.input * sign}`,
+          usage_output: sql`coalesce(${SessionTable.usage_output}, 0) + ${tokens.output * sign}`,
+          usage_reasoning: sql`coalesce(${SessionTable.usage_reasoning}, 0) + ${tokens.reasoning * sign}`,
+          usage_cache_read: sql`coalesce(${SessionTable.usage_cache_read}, 0) + ${tokens.cache.read * sign}`,
+          usage_cache_write: sql`coalesce(${SessionTable.usage_cache_write}, 0) + ${tokens.cache.write * sign}`,
+          usage_cost: sql`coalesce(${SessionTable.usage_cost}, 0) + ${cost * sign}`,
+          time_updated: Date.now(),
+        })
+        .where(eq(SessionTable.id, sessionID))
+        .returning()
+        .get()
+      if (!row) return
+      const info = fromRow(row)
+      Database.effect(() => Bus.publish(Event.Updated, { sessionID, info }))
+    })
+  }
+
+  export function addUsage(sessionID: SessionID, tokens: UsageTokens, cost: number) {
+    mutateUsage(sessionID, tokens, cost, 1)
+  }
+
+  export function subtractUsage(sessionID: SessionID, tokens: UsageTokens, cost: number) {
+    mutateUsage(sessionID, tokens, cost, -1)
+  }
+
+
   export const initialize = fn(
     z.object({ sessionID: SessionID.zod, modelID: ModelID.zod, providerID: ProviderID.zod, messageID: MessageID.zod }),
     (input) => runPromise((svc) => svc.initialize(input)),

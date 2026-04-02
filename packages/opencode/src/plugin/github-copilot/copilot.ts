@@ -47,7 +47,7 @@ export async function CopilotAuthPlugin(input: PluginInput): Promise<Hooks> {
           return Object.fromEntries(Object.entries(provider.models).map(([id, model]) => [id, fix(model)]))
         }
 
-        return CopilotModels.get(
+        const models = await CopilotModels.get(
           base(ctx.auth.enterpriseUrl),
           {
             Authorization: `Bearer ${ctx.auth.refresh}`,
@@ -58,6 +58,30 @@ export async function CopilotAuthPlugin(input: PluginInput): Promise<Hooks> {
           log.error("failed to fetch copilot models", { error })
           return Object.fromEntries(Object.entries(provider.models).map(([id, model]) => [id, fix(model)]))
         })
+
+        // Claude Sonnet 4.6 with 1M context window
+        const sonnet = models["claude-sonnet-4.6"]
+        if (sonnet) {
+          models["claude-sonnet-4.6-1m"] = {
+            ...sonnet,
+            id: "claude-sonnet-4.6-1m",
+            name: "Claude Sonnet 4.6",
+            limit: { context: 1_000_000, output: 64_000 },
+          }
+        }
+
+        // Claude Opus 4.6 with 1M context window
+        const opus = models["claude-opus-4.6"]
+        if (opus) {
+          models["claude-opus-4.6-1m"] = {
+            ...opus,
+            id: "claude-opus-4.6-1m",
+            name: "Claude Opus 4.6",
+            limit: { context: 1_000_000, output: 128_000 },
+          }
+        }
+
+        return models
       },
     },
     auth: {
@@ -313,7 +337,8 @@ export async function CopilotAuthPlugin(input: PluginInput): Promise<Hooks> {
       if (!incoming.model.providerID.includes("github-copilot")) return
 
       if (incoming.model.api.npm === "@ai-sdk/anthropic") {
-        output.headers["anthropic-beta"] = "interleaved-thinking-2025-05-14"
+        const beta = "claude-code-20250219,interleaved-thinking-2025-05-14,fine-grained-tool-streaming-2025-05-14"
+        output.headers["anthropic-beta"] = incoming.model.id.endsWith("-1m") ? `${beta},context-1m-2025-08-07` : beta
       }
 
       const parts = await sdk.session

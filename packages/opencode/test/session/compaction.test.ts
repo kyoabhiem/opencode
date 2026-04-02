@@ -431,28 +431,6 @@ describe("session.compaction.isOverflow", () => {
   })
 })
 
-<<<<<<< HEAD
-describe("util.token.budget", () => {
-  test("returns undefined for no context", () => {
-    expect(Token.budget(undefined)).toBeUndefined()
-    expect(Token.budget(0)).toBeUndefined()
-  })
-
-  test("uses 30% for small context windows", () => {
-    expect(Token.budget(32_000)).toBe(Math.floor(32_000 * 0.3))
-  })
-
-  test("uses 25% for large context windows", () => {
-    expect(Token.budget(200_000)).toBe(Math.floor(200_000 * Token.TRUNCATION_RATIO))
-  })
-
-  test("threshold is at 64k", () => {
-    // 64k should use 0.3
-    expect(Token.budget(64_000)).toBe(Math.floor(64_000 * 0.3))
-    // 65k should use TRUNCATION_RATIO
-    expect(Token.budget(65_000)).toBe(Math.floor(65_000 * Token.TRUNCATION_RATIO))
-||||||| bb8d2cdd1
-=======
 describe("session.compaction.create", () => {
   test("creates a compaction user message and part", async () => {
     await using tmp = await tmpdir()
@@ -1009,35 +987,22 @@ describe("session.compaction.process", () => {
         }
       },
     })
->>>>>>> anomalyco/dev
   })
 })
 
 describe("util.token.estimate", () => {
-  test("estimates tokens from text using tiktoken", () => {
+  test("estimates tokens from text (4 chars per token)", () => {
     const text = "x".repeat(4000)
-    const result = Token.estimate(text)
-    expect(result).toBeGreaterThan(0)
-    expect(result).toBeLessThan(4000)
+    expect(Token.estimate(text)).toBe(1000)
   })
 
   test("estimates tokens from larger text", () => {
     const text = "y".repeat(20_000)
-    const result = Token.estimate(text)
-    expect(result).toBeGreaterThan(0)
-    expect(result).toBeLessThan(20_000)
+    expect(Token.estimate(text)).toBe(5000)
   })
 
   test("returns 0 for empty string", () => {
     expect(Token.estimate("")).toBe(0)
-  })
-
-  test("natural language produces reasonable estimates", () => {
-    const text = "The quick brown fox jumps over the lazy dog."
-    const result = Token.estimate(text)
-    // ~10 tokens for this sentence
-    expect(result).toBeGreaterThanOrEqual(8)
-    expect(result).toBeLessThanOrEqual(15)
   })
 })
 
