@@ -9,6 +9,7 @@ import type {
   Provider,
   PermissionRequest,
   QuestionRequest,
+  Session,
   SessionStatus,
   Workspace,
   Config as SdkConfig,
@@ -228,6 +229,10 @@ export type TuiState = {
     get: (workspaceID: string) => Workspace | undefined
   }
   session: {
+    get: (sessionID: string) => Session | undefined
+    children: (sessionID: string) => ReadonlyArray<Session>
+    descendants: (sessionID: string) => ReadonlyArray<Session>
+    sync: (sessionID: string) => Promise<void>
     count: () => number
     diff: (sessionID: string) => ReadonlyArray<TuiSidebarFileItem>
     todo: (sessionID: string) => ReadonlyArray<TuiSidebarTodoItem>

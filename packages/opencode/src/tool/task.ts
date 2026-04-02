@@ -127,6 +127,9 @@ export const TaskTool = Tool.define("task", async (ctx) => {
       using _ = defer(() => ctx.abort.removeEventListener("abort", cancel))
       const promptParts = await SessionPrompt.resolvePromptParts(params.prompt)
 
+      const before = await Session.get(session.id).catch(() => undefined)
+      const beforeUsage = before?.usage
+
       const result = await SessionPrompt.prompt({
         messageID,
         sessionID: session.id,
@@ -142,6 +145,24 @@ export const TaskTool = Tool.define("task", async (ctx) => {
         },
         parts: promptParts,
       })
+
+      // Roll-up child session usage to parent
+      const after = await Session.get(session.id).catch(() => undefined)
+      if (after?.usage) {
+        const delta = {
+          input: after.usage.input - (beforeUsage?.input ?? 0),
+          output: after.usage.output - (beforeUsage?.output ?? 0),
+          reasoning: after.usage.reasoning - (beforeUsage?.reasoning ?? 0),
+          cache: {
+            read: after.usage.cache.read - (beforeUsage?.cache?.read ?? 0),
+            write: after.usage.cache.write - (beforeUsage?.cache?.write ?? 0),
+          },
+        }
+        const cost = after.usage.cost - (beforeUsage?.cost ?? 0)
+        if (delta.input + delta.output + delta.reasoning + delta.cache.read + delta.cache.write + cost > 0) {
+          Session.addUsage(ctx.sessionID, delta, cost)
+        }
+      }
 
       const text = result.parts.findLast((x) => x.type === "text")?.text ?? ""
 

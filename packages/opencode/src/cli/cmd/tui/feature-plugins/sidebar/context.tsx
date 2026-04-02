@@ -1,6 +1,6 @@
 import type { AssistantMessage } from "@opencode-ai/sdk/v2"
 import type { TuiPlugin, TuiPluginApi } from "@opencode-ai/plugin/tui"
-import { createMemo, For, Show } from "solid-js"
+import { createMemo, createEffect, For, Show } from "solid-js"
 import { createStore } from "solid-js/store"
 
 const id = "internal:sidebar-context"
@@ -32,13 +32,56 @@ function rowRight(tok: string, cost: string): string {
 
 function View(props: { api: TuiPluginApi; session_id: string }) {
   const theme = () => props.api.theme.current
-  const [expanded, setExpanded] = createStore({ tokens: false, orSim: false, anthropicSim: false })
+  const [expanded, setExpanded] = createStore({ tokens: false, subagents: false, orSim: false })
+
+  const session = createMemo(() => props.api.state.session.get(props.session_id))
+  const children = createMemo(() => props.api.state.session.children(props.session_id))
+  const descendants = createMemo(() => props.api.state.session.descendants(props.session_id))
+
+  const synced = new Set<string>()
+  createEffect(() => {
+    for (const d of descendants()) {
+      if (synced.has(d.id)) continue
+      synced.add(d.id)
+      props.api.state.session.sync(d.id)
+    }
+  })
 
   const messages = createMemo(() =>
     props.api.state.session.messages(props.session_id).filter((m): m is AssistantMessage => m.role === "assistant"),
   )
 
-  const cost = createMemo(() => messages().reduce((sum, m) => sum + m.cost, 0))
+  const allMessages = createMemo(() => {
+    const result = [...messages()]
+    for (const d of descendants()) {
+      const msgs = props.api.state.session.messages(d.id).filter((m): m is AssistantMessage => m.role === "assistant")
+      result.push(...msgs)
+    }
+    return result
+  })
+
+  const cost = createMemo(() => session()?.usage?.cost ?? messages().reduce((sum, m) => sum + m.cost, 0))
+
+  const parentCost = createMemo(() => messages().reduce((sum, m) => sum + m.cost, 0))
+
+  const subagents = createMemo(() => {
+    const list: Array<{ agent: string; title: string; cost: number; tokens: number }> = []
+    for (const child of children()) {
+      if (!child.usage) continue
+      const u = child.usage
+      const tok = u.input + u.output + u.reasoning + u.cache.read + u.cache.write
+      const agentMatch = child.title.match(/\(@(\w+) subagent\)$/)
+      const agent = agentMatch ? agentMatch[1] : "task"
+      const label = child.title.replace(/ \(@\w+ subagent\)$/, "")
+      list.push({ agent, title: label, cost: u.cost, tokens: tok })
+    }
+    return list
+  })
+
+  const subagentTotals = createMemo(() => {
+    const sa = subagents()
+    return { tokens: sa.reduce((s, x) => s + x.tokens, 0), cost: sa.reduce((s, x) => s + x.cost, 0) }
+  })
 
   const lastAssistant = createMemo(() => messages().findLast((m) => m.tokens.output > 0))
 
@@ -68,7 +111,7 @@ function View(props: { api: TuiPluginApi; session_id: string }) {
     let reasoning = 0
     let cacheRead = 0
     let cacheWrite = 0
-    for (const m of messages()) {
+    for (const m of allMessages()) {
       input += m.tokens.input
       output += m.tokens.output
       reasoning += m.tokens.reasoning
@@ -100,7 +143,7 @@ function View(props: { api: TuiPluginApi; session_id: string }) {
         count: number
       }
     >()
-    for (const m of messages()) {
+    for (const m of allMessages()) {
       const key = m.providerID + ":" + m.modelID
       const g = groups.get(key) ?? {
         providerID: m.providerID,
@@ -170,15 +213,24 @@ function View(props: { api: TuiPluginApi; session_id: string }) {
       if (!src) continue
       const family = (src as any).family as string | undefined
       let match = target.models[g.modelID]
-      if (!match && family) {
+      if (!match) {
         match = target.models[g.modelID.replace(/\./g, "-")]
-        if (!match) {
-          const candidates = Object.values(target.models).filter((m) => (m as any).family === family)
-          if (candidates.length > 0)
-            match = candidates.reduce((best, c) =>
-              ((c as any).release_date ?? "") > ((best as any).release_date ?? "") ? c : best,
-            )
+      }
+      if (!match) {
+        const norm = g.modelID.replace(/\./g, "-")
+        for (const [tid, m] of Object.entries(target.models)) {
+          if (tid.endsWith("/" + g.modelID) || tid.endsWith("/" + norm)) {
+            match = m
+            break
+          }
         }
+      }
+      if (!match && family) {
+        const candidates = Object.values(target.models).filter((m) => (m as any).family === family)
+        if (candidates.length > 0)
+          match = candidates.reduce((best, c) =>
+            ((c as any).release_date ?? "") > ((best as any).release_date ?? "") ? c : best,
+          )
       }
       if (!match) continue
       const m = 1_000_000
@@ -215,7 +267,6 @@ function View(props: { api: TuiPluginApi; session_id: string }) {
   }
 
   const orSim = createMemo(() => simulate("openrouter"))
-  const anthropicSim = createMemo(() => simulate("anthropic", "anthropic"))
 
   return (
     <box>
@@ -245,7 +296,7 @@ function View(props: { api: TuiPluginApi; session_id: string }) {
           onMouseDown={() => setExpanded("tokens", !expanded.tokens)}
         >
           <text fg={theme().text}>
-            <span style={{ fg: theme().textMuted }}>{expanded.tokens ? "▼" : "▶"}</span> Tokens
+            <span>{expanded.tokens ? "▼" : "▶"}</span> Tokens
           </text>
           <text fg={theme().text}>{fmtTok(totals().total)}</text>
         </box>
@@ -315,11 +366,39 @@ function View(props: { api: TuiPluginApi; session_id: string }) {
             )}
             <box flexDirection="row" justifyContent="space-between">
               <text fg={theme().textMuted}> turn</text>
-              <text fg={theme().textMuted}>{messages().length}</text>
+              <text fg={theme().textMuted}>{allMessages().length}</text>
             </box>
           </box>
         )}
       </box>
+
+      {subagents().length > 0 && (
+        <box>
+          <box
+            flexDirection="row"
+            justifyContent="space-between"
+            onMouseDown={() => setExpanded("subagents", !expanded.subagents)}
+          >
+            <text fg={theme().text}>
+              <span>{expanded.subagents ? "▼" : "▶"}</span> Subagents ({subagents().length})
+            </text>
+            <text fg={theme().text}>{rowRight(fmtTok(subagentTotals().tokens), fmtCost(subagentTotals().cost))}</text>
+          </box>
+          {expanded.subagents &&
+            subagents().map((sa) => (
+              <box>
+                <box flexDirection="row" justifyContent="space-between">
+                  <text fg={theme().textMuted}> @{sa.agent}</text>
+                  <text fg={theme().textMuted}>{rowRight(fmtTok(sa.tokens), fmtCost(sa.cost))}</text>
+                </box>
+                <text fg={theme().textMuted} wrapMode="none">
+                  {"   "}
+                  {sa.title.length > 30 ? sa.title.slice(0, 28) + ".." : sa.title}
+                </text>
+              </box>
+            ))}
+        </box>
+      )}
 
       {orSim() && (
         <box>
@@ -329,8 +408,7 @@ function View(props: { api: TuiPluginApi; session_id: string }) {
             onMouseDown={() => setExpanded("orSim", !expanded.orSim)}
           >
             <text fg={theme().text}>
-              <span style={{ fg: theme().textMuted }}>{expanded.orSim ? "▼" : "▶"}</span> via OpenRouter{" "}
-              {fmtTok(orSim()!.tokens)}
+              <span>{expanded.orSim ? "▼" : "▶"}</span> via OpenRouter {fmtTok(orSim()!.tokens)}
             </text>
             <text fg={orSim()!.sim - orSim()!.actual >= 0 ? theme().error : theme().success}>
               {fmtDiff(orSim()!.sim - orSim()!.actual)}
@@ -338,64 +416,6 @@ function View(props: { api: TuiPluginApi; session_id: string }) {
           </box>
           {expanded.orSim &&
             orSim()!.rows.map((row) => (
-              <box>
-                <box flexDirection="row" justifyContent="space-between">
-                  <text fg={theme().text} wrapMode="none">
-                    {" "}
-                    {row.label} ({fmtTok(row.context)}) {fmtTok(row.tokens)}
-                  </text>
-                  <text fg={theme().text}>{fmtCost(row.cost)}</text>
-                </box>
-                <box flexDirection="row" justifyContent="space-between">
-                  <text fg={theme().textMuted}> in</text>
-                  <text fg={theme().textMuted}>{rowRight(fmtTok(row.detail.tokIn), fmtCost(row.detail.input))}</text>
-                </box>
-                <box flexDirection="row" justifyContent="space-between">
-                  <text fg={theme().textMuted}> out</text>
-                  <text fg={theme().textMuted}>{rowRight(fmtTok(row.detail.tokOut), fmtCost(row.detail.output))}</text>
-                </box>
-                <box flexDirection="row" justifyContent="space-between">
-                  <text fg={theme().textMuted}> cache read</text>
-                  <text fg={theme().textMuted}>
-                    {rowRight(fmtTok(row.detail.tokRead), fmtCost(row.detail.cacheRead))}
-                  </text>
-                </box>
-                <box flexDirection="row" justifyContent="space-between">
-                  <text fg={theme().textMuted}> cache write</text>
-                  <text fg={theme().textMuted}>
-                    {rowRight(fmtTok(row.detail.tokWrite), fmtCost(row.detail.cacheWrite))}
-                  </text>
-                </box>
-                <box flexDirection="row" justifyContent="space-between">
-                  <text fg={theme().textMuted}> turns</text>
-                  <text fg={theme().textMuted}>{row.count}</text>
-                </box>
-                <box flexDirection="row" justifyContent="space-between">
-                  <text fg={theme().textMuted}> vs actual</text>
-                  <text fg={row.detail.diff >= 0 ? theme().error : theme().success}>{fmtDiff(row.detail.diff)}</text>
-                </box>
-              </box>
-            ))}
-        </box>
-      )}
-
-      {anthropicSim() && (
-        <box>
-          <box
-            flexDirection="row"
-            justifyContent="space-between"
-            onMouseDown={() => setExpanded("anthropicSim", !expanded.anthropicSim)}
-          >
-            <text fg={theme().text}>
-              <span style={{ fg: theme().textMuted }}>{expanded.anthropicSim ? "▼" : "▶"}</span> via Anthropic{" "}
-              {fmtTok(anthropicSim()!.tokens)}
-            </text>
-            <text fg={anthropicSim()!.sim - anthropicSim()!.actual >= 0 ? theme().error : theme().success}>
-              {fmtDiff(anthropicSim()!.sim - anthropicSim()!.actual)}
-            </text>
-          </box>
-          {expanded.anthropicSim &&
-            anthropicSim()!.rows.map((row) => (
               <box>
                 <box flexDirection="row" justifyContent="space-between">
                   <text fg={theme().text} wrapMode="none">

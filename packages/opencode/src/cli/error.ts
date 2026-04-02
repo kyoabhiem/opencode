@@ -44,6 +44,18 @@ export async function FormatError(input: unknown) {
     ].join("\n")
 
   if (UI.CancelledError.isInstance(input)) return ""
+
+  const { MessageV2 } = await import("../session/message-v2")
+  if (MessageV2.APIError.isInstance(input)) {
+    const status = input.data.statusCode ? ` (${input.data.statusCode})` : ""
+    return `${input.data.message}${status}`
+  }
+  if (MessageV2.AuthError.isInstance(input)) {
+    return `Auth failed for ${input.data.providerID}: ${input.data.message}`
+  }
+  if (MessageV2.ContextOverflowError.isInstance(input)) {
+    return input.data.message
+  }
 }
 
 export function FormatUnknownError(input: unknown): string {

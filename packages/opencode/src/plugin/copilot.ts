@@ -64,7 +64,7 @@ export async function CopilotAuthPlugin(input: PluginInput): Promise<Hooks> {
             provider.models["claude-sonnet-4.6-1m"] = {
               ...sonnet,
               id: "claude-sonnet-4.6-1m",
-              name: "Claude Sonnet 4.6 1M",
+              name: "Claude Sonnet 4.6",
               api: { ...sonnet.api, id: "claude-sonnet-4.6" },
               cost: { ...sonnet.cost, cache: { ...sonnet.cost.cache } },
               limit: { context: 1_000_000, output: 64_000 },
@@ -77,7 +77,7 @@ export async function CopilotAuthPlugin(input: PluginInput): Promise<Hooks> {
             provider.models["claude-opus-4.6-1m"] = {
               ...opus,
               id: "claude-opus-4.6-1m",
-              name: "Claude Opus 4.6 1M",
+              name: "Claude Opus 4.6",
               api: { ...opus.api, id: "claude-opus-4.6" },
               cost: { ...opus.cost, cache: { ...opus.cost.cache } },
               limit: { context: 1_000_000, output: 128_000 },

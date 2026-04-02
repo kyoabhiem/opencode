@@ -156,6 +156,27 @@ function stateApi(sync: ReturnType<typeof useSync>): TuiPluginApi["state"] {
       },
     },
     session: {
+      get(sessionID) {
+        return sync.session.get(sessionID)
+      },
+      children(sessionID) {
+        return sync.data.session.filter((s) => s.parentID === sessionID)
+      },
+      descendants(sessionID) {
+        const result: (typeof sync.data.session)[number][] = []
+        const visit = (id: string) => {
+          for (const s of sync.data.session) {
+            if (s.parentID !== id) continue
+            result.push(s)
+            visit(s.id)
+          }
+        }
+        visit(sessionID)
+        return result
+      },
+      async sync(sessionID) {
+        await sync.session.sync(sessionID)
+      },
       count() {
         return sync.data.session.length
       },

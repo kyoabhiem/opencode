@@ -1190,6 +1190,38 @@ export namespace Provider {
       })().catch((e) => log.warn("state discovery error", { id: "gitlab", error: e }))
     }
 
+    // Override OpenRouter model costs with real pricing from their API.
+    // models.dev reports OpenRouter prices in per-token format while opencode
+    // expects per-million-token — fetching directly avoids the mismatch.
+    const openrouterID = ProviderID.make("openrouter")
+    if (providers[openrouterID]) {
+      await (async () => {
+        const res = await fetch("https://openrouter.ai/api/v1/models")
+        if (!res.ok) return
+        const json = (await res.json()) as { data: Array<{ id: string; pricing?: Record<string, string | null> }> }
+        const pricing = new Map<string, { input: number; output: number; cacheRead: number; cacheWrite: number }>()
+        for (const m of json.data) {
+          const p = m.pricing
+          if (!p) continue
+          pricing.set(m.id, {
+            input: Number(p.prompt ?? 0) * 1_000_000,
+            output: Number(p.completion ?? 0) * 1_000_000,
+            cacheRead: Number(p.input_cache_read ?? 0) * 1_000_000,
+            cacheWrite: Number(p.input_cache_write ?? 0) * 1_000_000,
+          })
+        }
+        for (const [modelID, model] of Object.entries(providers[openrouterID].models)) {
+          const p = pricing.get(modelID)
+          if (!p) continue
+          model.cost.input = p.input
+          model.cost.output = p.output
+          model.cost.cache.read = p.cacheRead
+          model.cost.cache.write = p.cacheWrite
+        }
+        log.info("openrouter pricing loaded", { models: pricing.size })
+      })().catch((e) => log.warn("openrouter pricing fetch failed", { error: e }))
+    }
+
     return {
       models: languages,
       providers,
