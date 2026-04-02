@@ -8,7 +8,7 @@ import z from "zod"
 import { Auth } from "../auth"
 import { Flag } from "../flag/flag"
 import { ProviderID } from "../provider/schema"
-import { WorkspaceRouterMiddleware } from "../control-plane/workspace-router-middleware"
+import { WorkspaceRouterMiddleware } from "./router"
 import { websocket } from "hono/bun"
 import { errors } from "./error"
 import { GlobalRoutes } from "./routes/global"
@@ -34,7 +34,7 @@ export namespace Server {
     return false
   }
 
-  export const Default = lazy(() => InstanceRoutes(ControlPlaneRoutes()))
+  export const Default = lazy(() => ControlPlaneRoutes())
 
   export const ControlPlaneRoutes = (opts?: { cors?: string[] }): Hono => {
     const app = new Hono()
@@ -238,7 +238,7 @@ export namespace Server {
   }
 
   export function createApp(opts: { cors?: string[] }) {
-    return InstanceRoutes(ControlPlaneRoutes(opts))
+    return ControlPlaneRoutes(opts)
   }
 
   export async function openapi() {
@@ -272,7 +272,7 @@ export namespace Server {
     cors?: string[]
   }) {
     url = new URL(`http://${opts.hostname}:${opts.port}`)
-    const app = InstanceRoutes(ControlPlaneRoutes({ cors: opts.cors }))
+    const app = ControlPlaneRoutes({ cors: opts.cors })
     const args = {
       hostname: opts.hostname,
       idleTimeout: 0,
