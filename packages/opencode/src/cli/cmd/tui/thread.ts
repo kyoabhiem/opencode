@@ -106,6 +106,7 @@ export const TuiThreadCommand = cmd({
       // Must be the very first thing — disables CTRL_C_EVENT before any Worker
       // spawn or async work so the OS cannot kill the process group.
       win32DisableProcessedInput()
+      const log = Log.create({ service: "startup" })
 
       if (args.fork && !args.continue && !args.session) {
         UI.error("--fork requires --continue or --session")
@@ -177,10 +178,12 @@ export const TuiThreadCommand = cmd({
       }
 
       const prompt = await input(args.prompt)
+      const t = log.time("config-load")
       const config = await Instance.provide({
         directory: cwd,
         fn: () => TuiConfig.get(),
       })
+      t.stop()
 
       const network = await resolveNetworkOptions(args)
       const external =
@@ -208,6 +211,7 @@ export const TuiThreadCommand = cmd({
       }, 300).unref?.()
 
       try {
+        const t = log.time("tui-call")
         await tui({
           url: transport.url,
           config,
@@ -223,6 +227,7 @@ export const TuiThreadCommand = cmd({
             fork: args.fork,
           },
         })
+        t.stop()
       } finally {
         await stop()
       }

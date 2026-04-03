@@ -23,6 +23,7 @@ await Log.init({
   })(),
 })
 
+const log = Log.create({ service: "startup" })
 process.on("unhandledRejection", (e) => {
   Log.Default.error("rejection", {
     e: e instanceof Error ? e.message : e,
@@ -54,6 +55,7 @@ const startEventStream = (input: { directory: string; workspaceID?: string }) =>
 
   ;(async () => {
     while (!signal.aborted) {
+      const t = log.time("instance-provide")
       const shouldReconnect = await Instance.provide({
         directory: input.directory,
         init: InstanceBootstrap,
@@ -93,6 +95,7 @@ const startEventStream = (input: { directory: string; workspaceID?: string }) =>
         return false
       })
 
+      t.stop()
       if (!shouldReconnect || signal.aborted) {
         break
       }

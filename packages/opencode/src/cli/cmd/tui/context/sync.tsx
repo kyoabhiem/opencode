@@ -114,6 +114,7 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
     })
 
     const sdk = useSDK()
+    const log = Log.create({ service: "startup" })
 
     async function syncWorkspaces() {
       const result = await sdk.client.experimental.workspace.list().catch(() => undefined)
@@ -365,6 +366,7 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
     const args = useArgs()
 
     async function bootstrap() {
+      const t = log.time("sync-blocking")
       const start = Date.now() - 30 * 24 * 60 * 60 * 1000
       const sessionListPromise = sdk.client.session
         .list({ start: start })
@@ -415,8 +417,10 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
           })
         })
         .then(() => {
+          t.stop()
           if (store.status !== "complete") setStore("status", "partial")
           // non-blocking
+          const t2 = log.time("sync-nonblocking")
           Promise.all([
             ...(args.continue ? [] : [sessionListPromise.then((sessions) => setStore("session", reconcile(sessions)))]),
             sdk.client.command.list().then((x) => setStore("command", reconcile(x.data ?? []))),
@@ -432,6 +436,7 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
             sdk.client.path.get().then((x) => setStore("path", reconcile(x.data!))),
             syncWorkspaces(),
           ]).then(() => {
+            t2.stop()
             setStore("status", "complete")
           })
         })

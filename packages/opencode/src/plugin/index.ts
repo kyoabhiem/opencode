@@ -185,9 +185,6 @@ export namespace Plugin {
           )
           for (const load of loaded) {
             if (!load) continue
-
-            // Keep plugin execution sequential so hook registration and execution
-            // order remains deterministic across plugin runs.
             yield* Effect.tryPromise({
               try: () => applyPlugin(load, input, hooks),
               catch: (err) => {
@@ -197,11 +194,13 @@ export namespace Plugin {
               },
             }).pipe(
               Effect.catch((message) =>
-                bus.publish(Session.Event.Error, {
-                  error: new NamedError.Unknown({
-                    message: `Failed to load plugin ${load.spec}: ${message}`,
-                  }).toObject(),
-                }),
+                Effect.sync(() =>
+                  Bus.publish(Session.Event.Error, {
+                    error: new NamedError.Unknown({
+                      message: `Failed to load plugin ${load.spec}: ${message}`,
+                    }).toObject(),
+                  }),
+                ),
               ),
             )
           }

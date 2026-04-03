@@ -13,15 +13,20 @@ import { Log } from "@/util/log"
 import { ShareNext } from "@/share/share-next"
 
 export async function InstanceBootstrap() {
-  Log.Default.info("bootstrapping", { directory: Instance.directory })
+  const log = Log.create({ service: "startup" })
+  log.info("bootstrapping", { directory: Instance.directory })
+  const t1 = log.time("plugin")
   await Plugin.init()
-  ShareNext.init()
-  Format.init()
+  t1.stop()
+  { using _ = log.time("share-next"); ShareNext.init() }
+  { using _ = log.time("format"); Format.init() }
+  const t2 = log.time("lsp")
   await LSP.init()
-  File.init()
-  FileWatcher.init()
-  Vcs.init()
-  Snapshot.init()
+  t2.stop()
+  { using _ = log.time("file"); File.init() }
+  { using _ = log.time("file-watcher"); FileWatcher.init() }
+  { using _ = log.time("vcs"); Vcs.init() }
+  { using _ = log.time("snapshot"); Snapshot.init() }
 
   Bus.subscribe(Command.Event.Executed, async (payload) => {
     if (payload.properties.name === Command.Default.INIT) {

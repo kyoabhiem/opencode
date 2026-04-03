@@ -18,6 +18,7 @@ import {
 } from "solid-js"
 import { win32DisableProcessedInput, win32InstallCtrlCGuard } from "./win32"
 import { Flag } from "@/flag/flag"
+import { Log } from "@/util/log"
 import semver from "semver"
 import { DialogProvider, useDialog } from "@tui/ui/dialog"
 import { DialogProvider as DialogProviderList } from "@tui/component/dialog-provider"
@@ -59,6 +60,7 @@ import { TuiConfigProvider, useTuiConfig } from "./context/tui-config"
 import { TuiConfig } from "@/config/tui"
 import { createTuiApi, TuiPluginRuntime, type RouteMap } from "./plugin"
 import { FormatError, FormatUnknownError } from "@/cli/error"
+const log = Log.create({ service: "startup" })
 
 async function getTerminalBackgroundColor(): Promise<"dark" | "light"> {
   // can't set raw mode if not a TTY
@@ -175,7 +177,9 @@ export function tui(input: {
     const unguard = win32InstallCtrlCGuard()
     win32DisableProcessedInput()
 
+    const t1 = log.time("terminal-bg")
     const mode = await getTerminalBackgroundColor()
+    t1.stop()
 
     // Re-clear after getTerminalBackgroundColor() — setRawMode(false) restores
     // the original console mode which re-enables ENABLE_PROCESSED_INPUT.
@@ -190,8 +194,11 @@ export function tui(input: {
       await TuiPluginRuntime.dispose()
     }
 
+    const t2 = log.time("renderer-create")
     const renderer = await createCliRenderer(rendererConfig(input.config))
+    t2.stop()
 
+    const t3 = log.time("render")
     await render(() => {
       return (
         <ErrorBoundary
@@ -243,6 +250,7 @@ export function tui(input: {
         </ErrorBoundary>
       )
     }, renderer)
+    t3.stop()
   })
 }
 
@@ -289,11 +297,13 @@ function App(props: { onSnapshot?: () => Promise<string[]> }) {
     api.dispose()
   })
   const [ready, setReady] = createSignal(false)
+  const t = log.time("plugin-init")
   TuiPluginRuntime.init(api)
     .catch((error) => {
       console.error("Failed to load TUI plugins", error)
     })
     .finally(() => {
+      t.stop()
       setReady(true)
     })
 
