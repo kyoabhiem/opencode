@@ -1285,6 +1285,26 @@ export namespace Provider {
           const openrouterID = ProviderID.make("openrouter")
           if (providers[openrouterID]) {
             yield* Effect.promise(async () => {
+              const cachePath = path.join(Global.Path.cache, "openrouter-pricing.json")
+              const ttl = 24 * 60 * 60 * 1000 // 24 hours
+
+              // Try loading from cache first
+              const cached = await Filesystem.readJson<{ ts: number; pricing: Array<[string, { input: number; output: number; cacheRead: number; cacheWrite: number }]> }>(cachePath).catch(() => undefined)
+              if (cached && Date.now() - cached.ts < ttl) {
+                const pricing = new Map(cached.pricing)
+                for (const [modelID, model] of Object.entries(providers[openrouterID].models)) {
+                  const p = pricing.get(modelID)
+                  if (!p) continue
+                  model.cost.input = p.input
+                  model.cost.output = p.output
+                  model.cost.cache.read = p.cacheRead
+                  model.cost.cache.write = p.cacheWrite
+                }
+                log.info("openrouter pricing loaded from cache", { models: pricing.size })
+                return
+              }
+
+              // Fetch from API if cache is stale or missing
               try {
                 const res = await fetch("https://openrouter.ai/api/v1/models")
                 if (!res.ok) return
@@ -1309,6 +1329,12 @@ export namespace Provider {
                   model.cost.cache.write = p.cacheWrite
                 }
                 log.info("openrouter pricing loaded", { models: pricing.size })
+
+                // Write to cache (silently ignore failures)
+                await Filesystem.writeJson(cachePath, {
+                  ts: Date.now(),
+                  pricing: Array.from(pricing.entries()),
+                }).catch(() => {})
               } catch (e) {
                 log.warn("openrouter pricing fetch failed", { error: e })
               }
