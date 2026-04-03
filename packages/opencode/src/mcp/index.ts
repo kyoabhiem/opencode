@@ -487,20 +487,25 @@ export namespace MCP {
             defs: {},
           }
 
+          // Set disabled status for disabled/unconfigured servers synchronously
+          for (const [key, mcp] of Object.entries(config)) {
+            if (!isMcpConfigured(mcp)) {
+              log.error("Ignoring MCP config entry without type", { key })
+              continue
+            }
+            if (mcp.enabled === false) {
+              s.status[key] = { status: "disabled" }
+            }
+          }
+
+          // Fork all connections as background fiber (non-blocking)
           yield* Effect.forEach(
-            Object.entries(config),
+            Object.entries(config).filter((entry): entry is [string, Config.Mcp & { enabled: true | undefined }] => {
+              const [, mcp] = entry
+              return isMcpConfigured(mcp) && mcp.enabled !== false
+            }),
             ([key, mcp]) =>
               Effect.gen(function* () {
-                if (!isMcpConfigured(mcp)) {
-                  log.error("Ignoring MCP config entry without type", { key })
-                  return
-                }
-
-                if (mcp.enabled === false) {
-                  s.status[key] = { status: "disabled" }
-                  return
-                }
-
                 const result = yield* create(key, mcp).pipe(Effect.catch(() => Effect.succeed(undefined)))
                 if (!result) return
 
@@ -512,7 +517,7 @@ export namespace MCP {
                 }
               }),
             { concurrency: "unbounded" },
-          )
+          ).pipe(Effect.catchCause((c) => Effect.sync(() => log.error("MCP connection failed", { cause: c }))), Effect.forkScoped)
 
           yield* Effect.addFinalizer(() =>
             Effect.gen(function* () {
