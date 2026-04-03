@@ -116,6 +116,11 @@ export namespace Npm {
       return
     }
 
+    if (await Filesystem.exists(path.join(dir, "bun.lock"))) {
+      log.info("dependencies in sync (bun.lock)")
+      return
+    }
+
     const pkg = await Filesystem.readJson(path.join(dir, "package.json")).catch(() => ({}))
     const lock = await Filesystem.readJson(path.join(dir, "package-lock.json")).catch(() => ({}))
 
