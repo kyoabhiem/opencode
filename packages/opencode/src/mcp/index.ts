@@ -24,7 +24,7 @@ import { BusEvent } from "../bus/bus-event"
 import { Bus } from "@/bus"
 import { TuiEvent } from "@/cli/cmd/tui/event"
 import open from "open"
-import { Effect, Exit, Layer, Option, ServiceMap, Stream } from "effect"
+import { Duration, Effect, Exit, Layer, Option, Schedule, ServiceMap, Stream } from "effect"
 import { InstanceState } from "@/effect/instance-state"
 import { makeRuntime } from "@/effect/run-service"
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process"
@@ -49,6 +49,14 @@ export namespace MCP {
     "mcp.tools.changed",
     z.object({
       server: z.string(),
+    }),
+  )
+
+  export const StatusChanged = BusEvent.define(
+    "mcp.status.changed",
+    z.object({
+      server: z.string(),
+      status: MCP.Status,
     }),
   )
 
@@ -544,6 +552,32 @@ export namespace MCP {
 
           return s
         }),
+      )
+
+      yield* Effect.fnUntraced(function* () {
+        const s = yield* InstanceState.get(state)
+        const cfg = yield* cfgSvc.get()
+        const config = cfg.mcp ?? {}
+        for (const [key, mcp] of Object.entries(config)) {
+          if (!isMcpConfigured(mcp) || mcp.enabled === false) continue
+          if (s.status[key]?.status === "connected") continue
+          const prev = s.status[key]?.status
+          const result = yield* create(key, mcp).pipe(Effect.catch(() => Effect.succeed(undefined)))
+          if (!result) continue
+          s.status[key] = result.status
+          if (result.mcpClient) {
+            s.clients[key] = result.mcpClient
+            s.defs[key] = result.defs!
+            watch(s, key, result.mcpClient, mcp.timeout)
+          }
+          if (prev !== result.status.status) {
+            yield* bus.publish(StatusChanged, { server: key, status: result.status }).pipe(Effect.ignore)
+          }
+        }
+      })().pipe(
+        Effect.repeat(Schedule.spaced(Duration.seconds(30))),
+        Effect.catchCause((c) => Effect.sync(() => log.error("MCP health check failed", { cause: c }))),
+        Effect.forkScoped,
       )
 
       function closeClient(s: State, name: string) {

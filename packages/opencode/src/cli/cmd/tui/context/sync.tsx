@@ -25,7 +25,7 @@ import { createSimpleContext } from "./helper"
 import type { Snapshot } from "@/snapshot"
 import { useExit } from "./exit"
 import { useArgs } from "./args"
-import { batch, onMount } from "solid-js"
+import { batch, onCleanup, onMount } from "solid-js"
 import { Log } from "@/util/log"
 import type { Path } from "@opencode-ai/sdk"
 import type { Workspace } from "@opencode-ai/sdk/v2"
@@ -452,6 +452,12 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
 
     onMount(() => {
       bootstrap()
+      const id = setInterval(() => {
+        sdk.client.mcp.status().then((x) => {
+          if (x.data) setStore("mcp", reconcile(x.data))
+        })
+      }, 30000)
+      onCleanup(() => clearInterval(id))
     })
 
     const fullSyncedSessions = new Set<string>()
