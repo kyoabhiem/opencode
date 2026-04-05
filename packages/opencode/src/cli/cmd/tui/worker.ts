@@ -13,6 +13,7 @@ import { Flag } from "@/flag/flag"
 import { setTimeout as sleep } from "node:timers/promises"
 import { writeHeapSnapshot } from "node:v8"
 import { WorkspaceID } from "@/control-plane/schema"
+import { Heap } from "@/cli/heap"
 
 await Log.init({
   print: process.argv.includes("--print-logs"),
@@ -24,6 +25,9 @@ await Log.init({
 })
 
 const log = Log.create({ service: "startup" })
+
+Heap.start()
+
 process.on("unhandledRejection", (e) => {
   Log.Default.error("rejection", {
     e: e instanceof Error ? e.message : e,

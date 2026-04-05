@@ -1,4 +1,4 @@
-import { BoxRenderable, TextareaRenderable, MouseEvent, PasteEvent, t, dim, fg } from "@opentui/core"
+import { BoxRenderable, TextareaRenderable, MouseEvent, PasteEvent, decodePasteBytes, t, dim, fg } from "@opentui/core"
 import { createEffect, createMemo, type JSX, onMount, createSignal, onCleanup, on, Show, Switch, Match } from "solid-js"
 import "opentui-spinner/solid"
 import path from "path"
@@ -18,7 +18,7 @@ import { usePromptStash } from "./stash"
 import { DialogStash } from "../dialog-stash"
 import { type AutocompleteRef, Autocomplete } from "./autocomplete"
 import { useCommandDialog } from "../dialog-command"
-import { useRenderer } from "@opentui/solid"
+import { useKeyboard, useRenderer } from "@opentui/solid"
 import { Editor } from "@tui/util/editor"
 import { useExit } from "../../context/exit"
 import { Clipboard } from "../../util/clipboard"
@@ -35,6 +35,8 @@ import { useToast } from "../../ui/toast"
 import { useKV } from "../../context/kv"
 import { useTextareaKeybindings } from "../textarea-keybindings"
 import { DialogSkill } from "../dialog-skill"
+import { CONSOLE_MANAGED_ICON, consoleManagedProviderLabel } from "@tui/util/provider-origin"
+
 
 export type PromptProps = {
   sessionID?: string
@@ -43,6 +45,7 @@ export type PromptProps = {
   disabled?: boolean
   onSubmit?: () => void
   ref?: (ref: PromptRef) => void
+  right?: JSX.Element
   hint?: JSX.Element
   showPlaceholder?: boolean
   placeholders?: {
@@ -86,6 +89,16 @@ export function Prompt(props: PromptProps) {
   const status = createMemo(() => sync.data.session_status?.[props.sessionID ?? ""] ?? { type: "idle" })
   const history = usePromptHistory()
   const stash = usePromptStash()
+  const [auto, setAuto] = createSignal<AutocompleteRef>()
+  const activeOrgName = createMemo(() => sync.data.console_state.activeOrgName)
+  const canSwitchOrgs = createMemo(() => sync.data.console_state.switchableOrgCount > 1)
+  const currentProviderLabel = createMemo(() => {
+    const current = local.model.current()
+    const provider = local.model.parsed().provider
+    if (!current) return provider
+    return consoleManagedProviderLabel(sync.data.console_state.consoleManagedProviders, current.providerID, provider)
+  })
+  const hasRightContent = createMemo(() => Boolean(props.right || activeOrgName()))
   const command = useCommandDialog()
   const renderer = useRenderer()
   const { theme, syntax } = useTheme()
@@ -421,9 +434,29 @@ export function Prompt(props: PromptProps) {
     },
   }
 
+  onCleanup(() => {
+    props.ref?.(undefined as unknown as PromptRef)
+  })
+
   createEffect(() => {
-    if (props.visible !== false) input?.focus()
-    if (props.visible === false) input?.blur()
+    if (!input || input.isDestroyed) return
+    if (props.visible === false || dialog.stack.length > 0) {
+      input.blur()
+      return
+    }
+
+    // Slot/plugin updates can remount the background prompt while a dialog is open.
+    // Keep focus with the dialog and let the prompt reclaim it after the dialog closes.
+    input.focus()
+  })
+
+  createEffect(() => {
+    if (!input || input.isDestroyed) return
+    input.traits = {
+      capture: auto()?.visible ? ["escape", "navigate", "submit", "tab"] : undefined,
+      suspend: !!props.disabled || store.mode === "shell",
+      status: store.mode === "shell" ? "SHELL" : undefined,
+    }
   })
 
   function restoreExtmarksFromParts(parts: PromptInfo["parts"]) {
@@ -828,7 +861,10 @@ export function Prompt(props: PromptProps) {
     <>
       <Autocomplete
         sessionID={props.sessionID}
-        ref={(r) => (autocomplete = r)}
+        ref={(r) => {
+          autocomplete = r
+          setAuto(() => r)
+        }}
         anchor={() => anchor}
         input={() => input}
         setPrompt={(cb) => {
@@ -1042,7 +1078,7 @@ export function Prompt(props: PromptProps) {
               cursorColor={theme.text}
               syntaxStyle={syntax()}
             />
-            <box flexDirection="row" flexShrink={0} paddingTop={1} gap={1}>
+            <box flexDirection="row" flexShrink={0} paddingTop={1} gap={1} justifyContent="space-between">
               <text fg={highlight()}>
                 {store.mode === "shell" ? "Shell" : Locale.titlecase(local.agent.current().name)}{" "}
               </text>
@@ -1054,7 +1090,7 @@ export function Prompt(props: PromptProps) {
                       <span style={{ fg: theme.textMuted }}> ({local.model.parsed().context})</span>
                     </Show>
                   </text>
-                  <text fg={theme.textMuted}>{local.model.parsed().provider}</text>
+                  <text fg={theme.textMuted}>{currentProviderLabel()}</text>
                   <Show when={showVariant()}>
                     <text fg={theme.textMuted}>·</text>
                     <text>
@@ -1063,8 +1099,25 @@ export function Prompt(props: PromptProps) {
                   </Show>
                 </box>
               </Show>
-            </box>
+              <Show when={hasRightContent()}>
+                <box flexDirection="row" gap={1} alignItems="center">
+                  {props.right}
+                  <Show when={activeOrgName()}>
+                    <text
+                      fg={theme.textMuted}
+                      onMouseUp={() => {
+                        if (!canSwitchOrgs()) return
+                        command.trigger("console.org.switch")
+                      }}
+                    >
+                      {`${CONSOLE_MANAGED_ICON} ${activeOrgName()}`}
+                    </text>
+                  </Show>
+                </box>
+              </Show>
           </box>
+
+        </box>
         </box>
         <box
           height={1}

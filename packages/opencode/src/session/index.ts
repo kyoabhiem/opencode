@@ -310,7 +310,7 @@ export namespace Session {
     const tokens = {
       total,
       input: adjustedInputTokens,
-      output: outputTokens,
+      output: outputTokens - reasoningTokens,
       reasoning: reasoningTokens,
       cache: {
         write: cacheWriteInputTokens,
